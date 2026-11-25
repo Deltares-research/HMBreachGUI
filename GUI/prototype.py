@@ -1,24 +1,13 @@
-"""Feasibility prototype: run the existing HMBreach CLI from a Qt window."""
+"""Tkinter shell for running the existing HMBreach command-line solver."""
 
-import sys
+import os
 from pathlib import Path
-
-from PySide6.QtCore import QProcess, QProcessEnvironment
-from PySide6.QtGui import QCloseEvent, QTextCursor
-from PySide6.QtWidgets import (
-    QApplication,
-    QFileDialog,
-    QFormLayout,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMainWindow,
-    QMessageBox,
-    QPlainTextEdit,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
-)
+import queue
+import subprocess
+import sys
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,144 +19,213 @@ def default_executable():
     return ROOT / "build" / "Release" / "HMBreach.exe"
 
 
-class PrototypeWindow(QMainWindow):
+class PrototypeWindow(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("HMBreach - PySide6 feasibility prototype")
-        self.resize(900, 600)
+        self.title("HMBreach")
+        self.geometry("900x600")
+        self.minsize(720, 480)
+        self.process = None
+        self._output_queue = queue.Queue()
+        self._stdout_thread = None
 
-        self.process = QProcess(self)
-        self.process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
-        self.process.readyReadStandardOutput.connect(self._read_stdout)
-        self.process.readyReadStandardError.connect(self._read_stderr)
-        self.process.errorOccurred.connect(self._process_error)
-        self.process.finished.connect(self._process_finished)
+        self.tabs = ttk.Notebook(self)
+        self.tabs.pack(fill="both", expand=True)
+        self.run_page = ttk.Frame(self.tabs, padding=10)
+        self.tabs.add(self.run_page, text="Run")
 
-        self.executable = QLineEdit(str(default_executable()))
-        self.input_file = QLineEdit(str(ROOT / "examples" / "turbulence_input.json"))
-        self.output_directory = QLineEdit()
-        self.run_button = QPushButton("Run calculation")
-        self.run_button.clicked.connect(self.run_calculation)
-        self.status = QLabel("Select an output working directory to begin.")
-        self.output = QPlainTextEdit()
-        self.output.setReadOnly(True)
+        self.executable = tk.StringVar(value=str(default_executable()))
+        self.input_file = tk.StringVar(value=str(ROOT / "examples" / "turbulence_input.json"))
+        self.output_directory = tk.StringVar()
+        self.status = tk.StringVar(value="Select an output working directory to begin.")
 
-        form = QFormLayout()
-        form.addRow("HMBreach executable", self._path_row(self.executable, self._choose_executable))
-        form.addRow("Input JSON", self._path_row(self.input_file, self._choose_input))
-        form.addRow("Working directory", self._path_row(self.output_directory, self._choose_directory))
-        warning = QLabel(
-            "The solver writes output files using paths from the JSON. "
-            "Existing files at those paths may be overwritten; absolute paths "
-            "are not restricted to the working directory."
+        form = ttk.Frame(self.run_page)
+        form.pack(fill="x")
+        self.executable_entry = self._path_row(
+            form, 0, "HMBreach executable", self.executable, self._choose_executable
         )
-        warning.setWordWrap(True)
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.addLayout(form)
-        layout.addWidget(warning)
-        layout.addWidget(self.run_button)
-        layout.addWidget(self.status)
-        layout.addWidget(self.output)
-        self.setCentralWidget(page)
+        self.input_entry = self._path_row(
+            form, 1, "Input JSON", self.input_file, self._choose_input
+        )
+        self.output_directory_entry = self._path_row(
+            form, 2, "Working directory", self.output_directory, self._choose_directory
+        )
+        ttk.Label(
+            self.run_page,
+            text=(
+                "The solver writes output files using paths from the JSON. Existing files at "
+                "those paths may be overwritten; absolute paths are not restricted to the "
+                "working directory."
+            ),
+            wraplength=850,
+        ).pack(fill="x", pady=6)
+        self.run_button = ttk.Button(
+            self.run_page, text="Run calculation", command=self.run_calculation
+        )
+        self.run_button.pack(anchor="w", pady=4)
+        ttk.Label(self.run_page, textvariable=self.status, wraplength=850).pack(fill="x", pady=3)
+        output_frame = ttk.Frame(self.run_page)
+        output_frame.pack(fill="both", expand=True, pady=4)
+        self.output = tk.Text(output_frame, wrap="none", state="disabled")
+        yscroll = ttk.Scrollbar(output_frame, orient="vertical", command=self.output.yview)
+        xscroll = ttk.Scrollbar(output_frame, orient="horizontal", command=self.output.xview)
+        self.output.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        self.output.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll.grid(row=1, column=0, sticky="ew")
+        output_frame.rowconfigure(0, weight=1)
+        output_frame.columnconfigure(0, weight=1)
+        self.protocol("WM_DELETE_WINDOW", self._close)
 
-    def _path_row(self, field, callback):
-        row = QWidget()
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(field)
-        button = QPushButton("Browse...")
-        button.clicked.connect(callback)
-        layout.addWidget(button)
-        return row
+    @staticmethod
+    def _path_row(parent, row, label, variable, callback):
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=3)
+        entry = ttk.Entry(parent, textvariable=variable)
+        entry.grid(row=row, column=1, sticky="ew", pady=3)
+        ttk.Button(parent, text="Browse...", command=callback).grid(
+            row=row, column=2, sticky="e", padx=(6, 0), pady=3
+        )
+        parent.columnconfigure(1, weight=1)
+        return entry
 
     def _choose_executable(self):
-        filename, _ = QFileDialog.getOpenFileName(
-            self, "Select HMBreach executable", "", "Executable files (*.exe);;All files (*)"
+        filename = filedialog.askopenfilename(
+            parent=self,
+            title="Select HMBreach executable",
+            filetypes=(("Executable files", "*.exe"), ("All files", "*.*")),
         )
         if filename:
-            self.executable.setText(filename)
+            self.executable.set(filename)
 
     def _choose_input(self):
-        filename, _ = QFileDialog.getOpenFileName(
-            self, "Select input JSON", "", "JSON files (*.json);;All files (*)"
+        filename = filedialog.askopenfilename(
+            parent=self,
+            title="Select input JSON",
+            filetypes=(("JSON files", "*.json"), ("All files", "*.*")),
         )
         if filename:
-            self.input_file.setText(filename)
+            self.input_file.set(filename)
 
     def _choose_directory(self):
-        directory = QFileDialog.getExistingDirectory(self, "Select working directory")
+        directory = filedialog.askdirectory(parent=self, title="Select working directory")
         if directory:
-            self.output_directory.setText(directory)
+            self.output_directory.set(directory)
 
     def run_calculation(self):
-        if self.process.state() != QProcess.ProcessState.NotRunning:
+        if self.process is not None and self.process.poll() is None:
             return
-        executable_text = self.executable.text().strip()
-        input_text = self.input_file.text().strip()
-        directory_text = self.output_directory.text().strip()
+        executable_text = self.executable.get().strip()
+        input_text = self.input_file.get().strip()
+        directory_text = self.output_directory.get().strip()
         if not executable_text or not Path(executable_text).is_file():
-            self.status.setText("Select an existing HMBreach executable.")
+            self.status.set("Select an existing HMBreach executable.")
             return
         if not input_text or not Path(input_text).is_file():
-            self.status.setText("Select an existing input JSON file.")
+            self.status.set("Select an existing input JSON file.")
             return
         if not directory_text or not Path(directory_text).is_dir():
-            self.status.setText("Select an existing working directory.")
+            self.status.set("Select an existing working directory.")
             return
 
-        self.output.clear()
-        self.status.setText("Calculation running...")
-        self.run_button.setEnabled(False)
-        self.process.setProcessEnvironment(QProcessEnvironment.systemEnvironment())
-        self.process.setWorkingDirectory(str(Path(directory_text).resolve()))
-        self.process.start(
-            str(Path(executable_text).resolve()),
-            ["--input", str(Path(input_text).resolve())],
-        )
-
-    def _append_output(self, data):
-        self.output.moveCursor(QTextCursor.MoveOperation.End)
-        self.output.insertPlainText(bytes(data).decode("utf-8", errors="replace"))
-        self.output.moveCursor(QTextCursor.MoveOperation.End)
-
-    def _read_stdout(self):
-        self._append_output(self.process.readAllStandardOutput())
-
-    def _read_stderr(self):
-        self._append_output(self.process.readAllStandardError())
-
-    def _process_error(self, error):
-        self._append_output(f"\nProcess error: {self.process.errorString()}\n".encode())
-        if error == QProcess.ProcessError.FailedToStart:
-            self.status.setText("Failed to start calculation.")
-            self.run_button.setEnabled(True)
-
-    def _process_finished(self, exit_code, exit_status):
-        self._read_stdout()
-        self._read_stderr()
-        if exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0:
-            self.status.setText("Calculation completed.")
-        else:
-            self.status.setText(f"Calculation failed (exit code {exit_code}).")
-        self.run_button.setEnabled(True)
-
-    def closeEvent(self, event: QCloseEvent):
-        if self.process.state() != QProcess.ProcessState.NotRunning:
-            QMessageBox.information(
-                self, "Calculation running", "Wait for the calculation to finish before closing."
+        self._set_output("")
+        self.status.set("Calculation running...")
+        self.run_button.configure(state="disabled")
+        try:
+            self.process = subprocess.Popen(
+                [str(Path(executable_text).resolve()), "--input", str(Path(input_text).resolve())],
+                cwd=str(Path(directory_text).resolve()),
+                env=os.environ.copy(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
             )
-            event.ignore()
+        except OSError as error:
+            self._append_output(f"Process error: {error}\n")
+            self.status.set("Failed to start calculation.")
+            self.run_button.configure(state="normal")
+            self.process = None
             return
-        event.accept()
+        self._stdout_thread = threading.Thread(target=self._read_output, daemon=True)
+        self._stdout_thread.start()
+        self.after(30, self._poll_process)
+
+    def _read_output(self):
+        process = self.process
+        if process is None or process.stdout is None:
+            return
+        try:
+            for line in process.stdout:
+                self._output_queue.put(line)
+        finally:
+            process.stdout.close()
+            self._output_queue.put(None)
+
+    def _drain_output(self):
+        finished = False
+        while True:
+            try:
+                text = self._output_queue.get_nowait()
+            except queue.Empty:
+                break
+            if text is None:
+                finished = True
+            else:
+                self._append_output(text)
+        return finished
+
+    def _poll_process(self):
+        output_finished = self._drain_output()
+        if self.process is None:
+            return
+        exit_code = self.process.poll()
+        if exit_code is None or not output_finished:
+            self.after(30, self._poll_process)
+            return
+        self.process = None
+        self._stdout_thread = None
+        self._process_finished(exit_code)
+
+    def _set_output(self, text):
+        self.output.configure(state="normal")
+        self.output.delete("1.0", "end")
+        if text:
+            self.output.insert("end", text)
+        self.output.configure(state="disabled")
+
+    def _append_output(self, text):
+        self.output.configure(state="normal")
+        self.output.insert("end", text)
+        self.output.see("end")
+        self.output.configure(state="disabled")
+
+    def _process_finished(self, exit_code):
+        if exit_code == 0:
+            self.status.set("Calculation completed.")
+        else:
+            self.status.set(f"Calculation failed (exit code {exit_code}).")
+        self.run_button.configure(state="normal")
+
+    def _is_running(self):
+        return self.process is not None and self.process.poll() is None
+
+    def _close(self):
+        if self._is_running():
+            messagebox.showinfo(
+                "Calculation running", "Wait for the calculation to finish before closing.",
+                parent=self,
+            )
+            return
+        self.destroy()
 
 
 def main():
-    application = QApplication(sys.argv)
     window = PrototypeWindow()
-    window.show()
-    return application.exec()
+    window.mainloop()
+    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

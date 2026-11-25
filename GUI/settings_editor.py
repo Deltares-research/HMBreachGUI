@@ -1,14 +1,9 @@
 """Editable solver settings and model-default overrides."""
 
 import math
+import tkinter as tk
 from copy import deepcopy
-
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import (
-    QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
-)
+from tkinter import messagebox, ttk
 
 
 PHYSICAL_FIELDS = (
@@ -53,133 +48,167 @@ def _number(text, label, integer=False):
     return value
 
 
-class SettingsEditor(QWidget):
-    changed = Signal()
-
-    def __init__(self):
-        super().__init__()
+class SettingsEditor(ttk.Frame):
+    def __init__(self, master=None, on_change=None):
+        super().__init__(master)
+        self.on_change = on_change
         self._loading = False
         self._width_points = []
         self._width_geometry_present = False
-        layout = QVBoxLayout(self)
-        intro = QLabel(
-            "Blank fields use solver defaults. Changing a width model may require changes "
-            "to initial width and layer flow widths on the Input tab. Layer angles and "
-            "hydraulic gradients are edited on the Input tab. Legacy alfa_reset, a_1_n0 "
-            "and d50d15 overrides are not supported by the current solver."
-        )
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        contents = QWidget()
-        groups = QVBoxLayout(contents)
 
-        model = QGroupBox("Model and flow width")
-        form = QFormLayout(model)
-        self.mode = self._combo((
+        self.canvas = tk.Canvas(self, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        contents = ttk.Frame(self.canvas, padding=8)
+        self._contents_window = self.canvas.create_window((0, 0), window=contents, anchor="nw")
+        contents.bind("<Configure>", self._update_scroll_region)
+        self.canvas.bind("<Configure>", self._resize_contents)
+        self._contents = contents
+
+        intro = ttk.Label(
+            contents,
+            text=(
+                "Blank fields use solver defaults. Changing a width model may require changes "
+                "to initial width and layer flow widths on the Input tab. Layer angles and "
+                "hydraulic gradients are edited on the Input tab. Legacy alfa_reset, a_1_n0 "
+                "and d50d15 overrides are not supported by the current solver."
+            ),
+            wraplength=950,
+        )
+        intro.pack(fill="x", pady=(0, 6))
+
+        model = ttk.LabelFrame(contents, text="Model and flow width", padding=6)
+        model.pack(fill="x", pady=4)
+        self.mode = self._combo(model, "Calculation mode", (
             ("Default (breach)", None), ("Breach", "breach"), ("Turbulence", "turbulence"),
         ))
-        self.width_model = self._combo((
+        self.width_model = self._combo(model, "Flow-width model", (
             ("Default (B-Constant)", None), ("B-Constant", "b_constant"),
             ("Unit width (B-Constant alias)", "unit_width"), ("B-Fit", "b_fit"),
             ("B-Calc / fanning", "b_calc"), ("Fanning (B-Calc alias)", "fanning"),
             ("Width geometry", "geometry"),
         ))
-        self.fit_type = self._combo((
+        self.fit_type = self._combo(model, "B-Fit function", (
             ("Default (Poly4)", None), ("Straight line", "straight_line"),
             ("Poly2", "poly2"), ("Poly3", "poly3"), ("Poly4", "poly4"),
             ("Exponential", "exp"), ("Power", "power"), ("Logarithmic", "log"),
             ("Rodbard", "rodbard"), ("Gamma variate", "gamma_variate"),
         ))
-        self.fit_iterations = self._field("1000")
-        form.addRow("Calculation mode", self.mode)
-        form.addRow("Flow-width model", self.width_model)
-        form.addRow("B-Fit function", self.fit_type)
-        form.addRow("B-Fit iteration limit", self.fit_iterations)
-        note = QLabel("B-Fit settings are valid only in B-Fit mode; clear them when switching modes.")
-        note.setWordWrap(True)
-        form.addRow(note)
-        self.width_table = QTableWidget(0, 2)
-        self.width_table.setHorizontalHeaderLabels(["Distance s (m)", "Width (m)"])
-        self.width_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.width_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-        self.width_table.setMinimumHeight(130)
-        self.width_table.setMaximumHeight(150)
-        self.width_table.itemChanged.connect(self._edited)
-        form.addRow("Width geometry points", self.width_table)
-        buttons = QHBoxLayout()
-        add = QPushButton("Add width point")
-        add.clicked.connect(self.add_width_point)
-        remove = QPushButton("Remove width point")
-        remove.clicked.connect(self.remove_width_point)
-        buttons.addWidget(add)
-        buttons.addWidget(remove)
-        form.addRow(buttons)
-        width_note = QLabel("Width geometry points are valid only in width-geometry mode.")
-        width_note.setWordWrap(True)
-        form.addRow(width_note)
-        groups.addWidget(model)
+        self.fit_iterations = self._field(model, "B-Fit iteration limit", "1000")
+        ttk.Label(
+            model, text="B-Fit settings apply only in B-Fit mode; clear them when switching modes.",
+            wraplength=900,
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=3)
+        ttk.Label(model, text="Width geometry points").grid(row=5, column=0, sticky="nw", pady=3)
+        table_frame = ttk.Frame(model)
+        table_frame.grid(row=5, column=1, sticky="ew", pady=3)
+        self.width_table = ttk.Treeview(table_frame, columns=("s_m", "width_m"), show="headings", height=5)
+        self.width_table.heading("s_m", text="Distance s (m)")
+        self.width_table.heading("width_m", text="Width (m)")
+        for column in ("s_m", "width_m"):
+            self.width_table.column(column, width=130, anchor="e")
+        self.width_table.pack(fill="x")
+        self.width_table.bind("<Double-1>", self._begin_width_cell_edit)
+        width_actions = ttk.Frame(table_frame)
+        width_actions.pack(fill="x", pady=3)
+        ttk.Button(width_actions, text="Add width point", command=self.add_width_point).pack(side="left")
+        ttk.Button(width_actions, text="Remove width point", command=self.remove_width_point).pack(
+            side="left", padx=5
+        )
+        ttk.Label(
+            model, text="Width geometry points are valid only in width-geometry mode.",
+            wraplength=900,
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=3)
+        model.columnconfigure(1, weight=1)
 
-        physical = QGroupBox("Physical constants")
-        form = QFormLayout(physical)
-        self.erosion_variant = self._combo((
+        physical = ttk.LabelFrame(contents, text="Physical constants", padding=6)
+        physical.pack(fill="x", pady=4)
+        self.erosion_variant = self._combo(physical, "Erosion formulation", (
             ("Default (Variant 2)", None), ("Variant 1", "variant_1"),
             ("Variant 2", "variant_2"),
         ))
-        self.erosion_variant.currentIndexChanged.connect(self._variant_changed)
-        form.addRow("Erosion formulation", self.erosion_variant)
+        self.erosion_variant.bind("<<ComboboxSelected>>", self._variant_changed, add="+")
         self.physical_fields = {}
+        self._physical_labels = {}
         for key, label, default in PHYSICAL_FIELDS:
-            field = self._field(default)
-            field.setToolTip(f"{label}. Leave blank for the solver default: {default}.")
-            self.physical_fields[key] = field
-            form.addRow(label, field)
-        groups.addWidget(physical)
+            variable, label_widget = self._field(physical, label, default, return_label=True)
+            self.physical_fields[key] = variable
+            self._physical_labels[key] = label_widget
 
-        numerical = QGroupBox("Numerical options")
-        form = QFormLayout(numerical)
+        numerical = ttk.LabelFrame(contents, text="Numerical options", padding=6)
+        numerical.pack(fill="x", pady=4)
         self.option_fields = {}
-        for key, label, default, _ in OPTION_FIELDS:
-            field = self._field(default)
-            field.setToolTip(f"{label}. Leave blank for the solver default: {default}.")
-            self.option_fields[key] = field
-            form.addRow(label, field)
-        self.adaptive = self._combo((
+        for key, label, default, _integer in OPTION_FIELDS:
+            self.option_fields[key] = self._field(numerical, label, default)
+        self.adaptive = self._combo(numerical, "Adaptive step sizing", (
             ("Default (off)", None), ("Off", False), ("On", True),
         ))
-        form.addRow("Adaptive step sizing", self.adaptive)
-        groups.addWidget(numerical)
-        reset = QPushButton("Reset physical and numerical overrides")
-        reset.clicked.connect(self._confirm_reset)
-        groups.addWidget(reset)
-        groups.addStretch()
-        scroll.setWidget(contents)
-        layout.addWidget(scroll, 1)
-        self.message = QLabel()
-        self.message.setWordWrap(True)
-        layout.addWidget(self.message)
+        ttk.Button(
+            contents, text="Reset physical and numerical overrides", command=self._confirm_reset
+        ).pack(anchor="w", pady=4)
+        self.message = ttk.Label(contents, wraplength=950)
+        self.message.pack(fill="x", pady=4)
         self._variant_changed()
 
-    def _field(self, default):
-        field = QLineEdit()
-        field.setPlaceholderText(f"Default: {default}")
-        field.textChanged.connect(self._edited)
-        return field
+    def _update_scroll_region(self, _event=None):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
-    def _combo(self, values):
-        combo = QComboBox()
-        for label, value in values:
-            combo.addItem(label, value)
-        combo.currentIndexChanged.connect(self._edited)
+    def _resize_contents(self, event):
+        self.canvas.itemconfigure(self._contents_window, width=event.width)
+
+    def _field(self, parent, label, default, return_label=False):
+        row = sum(1 for child in parent.winfo_children() if isinstance(child, ttk.Label))
+        label_widget = ttk.Label(parent, text=f"{label}  (default: {default})")
+        label_widget.grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
+        variable = tk.StringVar()
+        entry = ttk.Entry(parent, textvariable=variable)
+        entry.grid(row=row, column=1, sticky="ew", pady=2)
+        variable.trace_add("write", self._edited)
+        parent.columnconfigure(1, weight=1)
+        return (variable, label_widget) if return_label else variable
+
+    def _combo(self, parent, label, values):
+        row = sum(1 for child in parent.winfo_children() if isinstance(child, ttk.Label))
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
+        variable = tk.StringVar()
+        combo = ttk.Combobox(
+            parent, textvariable=variable, values=tuple(title for title, _value in values),
+            state="readonly",
+        )
+        combo._choice_values = list(values)
+        combo.grid(row=row, column=1, sticky="ew", pady=2)
+        combo.bind("<<ComboboxSelected>>", self._edited, add="+")
+        parent.columnconfigure(1, weight=1)
         return combo
 
+    def selected(self, key):
+        combo = {
+            "mode": self.mode,
+            "width_model": self.width_model,
+            "width_fit_type": self.fit_type,
+            "erosion_variant": self.erosion_variant,
+            "adaptive_step_sizing": self.adaptive,
+        }[key]
+        index = combo.current()
+        return combo._choice_values[index][1] if 0 <= index < len(combo._choice_values) else None
+
+    def _set_combo(self, combo, value):
+        for index, (_label, current) in enumerate(combo._choice_values):
+            if type(current) is type(value) and current == value:
+                combo.current(index)
+                return
+        combo._choice_values.append((f"Unsupported: {value}", value))
+        combo.configure(values=tuple(label for label, _value in combo._choice_values))
+        combo.current(len(combo._choice_values) - 1)
+
     def _edited(self, *_):
-        if not self._loading:
-            self.changed.emit()
+        if not self._loading and self.on_change is not None:
+            self.on_change()
 
     def _variant_changed(self, *_):
-        variant = self.erosion_variant.currentData()
+        variant = self.selected("erosion_variant")
         if variant is None or variant == "variant_2":
             phi, erosion_b = "29", "0.3"
         elif variant == "variant_1":
@@ -187,20 +216,7 @@ class SettingsEditor(QWidget):
         else:
             phi, erosion_b = "variant-dependent", "variant-dependent"
         for key, default in (("phi_deg", phi), ("erosion_b", erosion_b)):
-            self.physical_fields[key].setPlaceholderText(f"Default: {default}")
-            self.physical_fields[key].setToolTip(f"Leave blank for the selected variant's default: {default}.")
-
-    def _set_combo(self, combo, value):
-        # bools and integers compare equal in Python; only exact types are interchangeable here.
-        index = next(
-            (i for i in range(combo.count())
-             if type(combo.itemData(i)) is type(value) and combo.itemData(i) == value),
-            -1,
-        )
-        if index < 0:
-            combo.addItem(f"Unsupported: {value}", value)
-            index = combo.count() - 1
-        combo.setCurrentIndex(index)
+            self._physical_labels[key].configure(text=f"{dict((k, l) for k, l, _ in PHYSICAL_FIELDS)[key]}  (default: {default})")
 
     def set_case(self, case):
         settings = case.get("settings", {})
@@ -209,7 +225,7 @@ class SettingsEditor(QWidget):
         width_points = settings.get("width_geometry", [])
         if not isinstance(constants, dict) or not isinstance(options, dict):
             raise ValueError("Physical constants and model options must be objects.")
-        if not isinstance(width_points, list) or any(not isinstance(p, dict) for p in width_points):
+        if not isinstance(width_points, list) or any(not isinstance(point, dict) for point in width_points):
             raise ValueError("Width geometry must be an array of point objects.")
         for index, point in enumerate(width_points, 1):
             for key in ("s_m", "width_m"):
@@ -244,70 +260,108 @@ class SettingsEditor(QWidget):
                 (self.erosion_variant, constants.get("erosion_variant")),
                 (self.adaptive, options.get("adaptive_step_sizing")),
             ):
-                while combo.count() and combo.itemText(combo.count() - 1).startswith("Unsupported: "):
-                    combo.removeItem(combo.count() - 1)
+                unsupported = [
+                    index for index, (label, _value) in enumerate(combo._choice_values)
+                    if label.startswith("Unsupported: ")
+                ]
+                for index in reversed(unsupported):
+                    combo._choice_values.pop(index)
+                combo.configure(values=tuple(label for label, _value in combo._choice_values))
                 self._set_combo(combo, value)
-            self.fit_iterations.setText(str(settings["width_fit_max_iterations"])
-                                        if "width_fit_max_iterations" in settings else "")
-            for key, field in self.physical_fields.items():
-                field.setText(str(constants[key]) if key in constants else "")
-            for key, field in self.option_fields.items():
-                field.setText(str(options[key]) if key in options else "")
+            self.fit_iterations.set(
+                str(settings["width_fit_max_iterations"])
+                if "width_fit_max_iterations" in settings else ""
+            )
+            for key, variable in self.physical_fields.items():
+                variable.set(str(constants[key]) if key in constants else "")
+            for key, variable in self.option_fields.items():
+                variable.set(str(options[key]) if key in options else "")
             self._width_points = deepcopy(width_points)
             self._width_geometry_present = "width_geometry" in settings
-            self.width_table.setRowCount(0)
+            self.width_table.delete(*self.width_table.get_children())
             for point in self._width_points:
                 self._append_point(point)
-            self.message.clear()
+            self.message.configure(text="")
         finally:
             self._loading = False
+        self._variant_changed()
 
     def _append_point(self, point):
-        row = self.width_table.rowCount()
-        self.width_table.insertRow(row)
-        for column, key in enumerate(("s_m", "width_m")):
-            self.width_table.setItem(row, column, QTableWidgetItem(str(point.get(key, ""))))
+        return self.width_table.insert(
+            "", "end", values=(point.get("s_m", ""), point.get("width_m", ""))
+        )
+
+    def _begin_width_cell_edit(self, event):
+        row = self.width_table.identify_row(event.y)
+        column = self.width_table.identify_column(event.x)
+        if not row or column not in ("#1", "#2"):
+            return
+        box = self.width_table.bbox(row, column)
+        if not box:
+            return
+        x, y, width, height = box
+        values = list(self.width_table.item(row, "values"))
+        index = int(column[1:]) - 1
+        editor = ttk.Entry(self.width_table)
+        editor.insert(0, values[index])
+        editor.select_range(0, "end")
+        editor.place(x=x, y=y, width=width, height=height)
+        editor.focus_set()
+
+        def finish(_event=None):
+            if not editor.winfo_exists():
+                return
+            values[index] = editor.get()
+            editor.destroy()
+            self.width_table.item(row, values=values)
+            self._edited()
+
+        editor.bind("<Return>", finish)
+        editor.bind("<FocusOut>", finish)
+        editor.bind("<Escape>", lambda _event: editor.destroy())
 
     def add_width_point(self):
         self._loading = True
         try:
             self._width_geometry_present = True
             self._width_points.append({})
-            self._append_point({})
-            self.width_table.selectRow(self.width_table.rowCount() - 1)
+            item = self._append_point({})
+            self.width_table.selection_set(item)
         finally:
             self._loading = False
-        self.changed.emit()
+        self._edited()
 
     def remove_width_point(self):
-        row = self.width_table.currentRow()
-        if row < 0:
-            self.message.setText("Select a width point to remove.")
+        selection = self.width_table.selection()
+        if not selection:
+            self.message.configure(text="Select a width point to remove.")
             return
+        row = self.width_table.index(selection[0])
         self._loading = True
         try:
-            self.width_table.removeRow(row)
+            self.width_table.delete(selection[0])
             del self._width_points[row]
             self._width_geometry_present = bool(self._width_points)
         finally:
             self._loading = False
-        self.changed.emit()
+        self._edited()
 
     def _confirm_reset(self):
-        if QMessageBox.question(
-            self, "Reset overrides?",
-            "Reset all physical constants and numerical options to the solver defaults?"
-        ) != QMessageBox.StandardButton.Yes:
+        if not messagebox.askyesno(
+            "Reset overrides?",
+            "Reset all physical constants and numerical options to the solver defaults?",
+            parent=self,
+        ):
             return
         self._loading = True
         try:
-            self.erosion_variant.setCurrentIndex(0)
-            self.adaptive.setCurrentIndex(0)
-            for field in (*self.physical_fields.values(), *self.option_fields.values()):
-                field.clear()
+            self.erosion_variant.current(0)
+            self.adaptive.current(0)
+            for variable in (*self.physical_fields.values(), *self.option_fields.values()):
+                variable.set("")
         finally:
             self._loading = False
-        self.changed.emit()
+        self._edited()
 
     def apply_to_case(self, case):
         had_settings = "settings" in case
@@ -316,36 +370,38 @@ class SettingsEditor(QWidget):
             ("mode", self.mode), ("width_model", self.width_model),
             ("width_fit_type", self.fit_type),
         ):
-            value = combo.currentData()
+            value = self.selected(key)
             if value is None:
                 settings.pop(key, None)
             else:
                 settings[key] = value
-        iterations = self.fit_iterations.text().strip()
+        iterations = self.fit_iterations.get().strip()
         if iterations:
-            settings["width_fit_max_iterations"] = _number(iterations, "B-Fit iteration limit", True)
+            settings["width_fit_max_iterations"] = _number(
+                iterations, "B-Fit iteration limit", True
+            )
         else:
             settings.pop("width_fit_max_iterations", None)
         constants = deepcopy(settings.get("physical_constants", {}))
         options = deepcopy(settings.get("model_options", {}))
-        variant = self.erosion_variant.currentData()
+        variant = self.selected("erosion_variant")
         if variant is None:
             constants.pop("erosion_variant", None)
         else:
             constants["erosion_variant"] = variant
-        for key, label, _ in PHYSICAL_FIELDS:
-            text = self.physical_fields[key].text().strip()
+        for key, label, _default in PHYSICAL_FIELDS:
+            text = self.physical_fields[key].get().strip()
             if text:
                 constants[key] = _number(text, label)
             else:
                 constants.pop(key, None)
-        for key, label, _, integer in OPTION_FIELDS:
-            text = self.option_fields[key].text().strip()
+        for key, label, _default, integer in OPTION_FIELDS:
+            text = self.option_fields[key].get().strip()
             if text:
                 options[key] = _number(text, label, integer)
             else:
                 options.pop(key, None)
-        adaptive = self.adaptive.currentData()
+        adaptive = self.selected("adaptive_step_sizing")
         if adaptive is None:
             options.pop("adaptive_step_sizing", None)
         else:
@@ -355,12 +411,13 @@ class SettingsEditor(QWidget):
                 settings[key] = value
         if self._width_geometry_present:
             points = []
+            rows = self.width_table.get_children()
             for row, original in enumerate(self._width_points):
                 point = deepcopy(original)
+                values = self.width_table.item(rows[row], "values")
                 for column, key in enumerate(("s_m", "width_m")):
                     point[key] = _number(
-                        self.width_table.item(row, column).text().strip(),
-                        f"Width point {row + 1} {key}",
+                        values[column].strip(), f"Width point {row + 1} {key}"
                     )
                 points.append(point)
             settings["width_geometry"] = points

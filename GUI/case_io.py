@@ -1,4 +1,4 @@
-"""Case and versioned result persistence for the PySide6 GUI."""
+"""Case and versioned result persistence for the GUI."""
 
 import json
 import math

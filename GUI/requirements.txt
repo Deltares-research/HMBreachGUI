@@ -1,2 +1,1 @@
-PySide6>=6.8,<7
-pyqtgraph>=0.14,<0.15
+matplotlib>=3.9,<4

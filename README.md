@@ -1,7 +1,7 @@
 # HMBreach GUI
 
 A Windows desktop interface for editing HMBreach cases, running calculations,
-and exploring and exporting results. The GUI uses PySide6 and PyQtGraph.
+and exploring and exporting results. The GUI uses Tkinter/ttk and Matplotlib.
 
 The HMBreach calculation executable is distributed separately and is not
 included in this repository. A compatible executable is required to run
@@ -9,7 +9,8 @@ calculations; the GUI can also open previously saved results.
 
 ## Run from source
 
-From the repository root, using a Python version supported by PySide6:
+From the repository root, using a Windows Python installation that includes
+Tk/Tcl:
 
 ```powershell
 python -m venv .venv
@@ -30,13 +31,18 @@ provide a separately built, compatible solver executable:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r GUI\requirements-packaging.txt
-.\.venv\Scripts\python.exe GUI\package_windows.py --solver C:\path\to\HMBreach.exe
+.\.venv\Scripts\python.exe GUI\package_windows.py `
+  --solver C:\path\to\HMBreach.exe `
+  --output dist\HMBreachGUI-no-qt
 ```
 
-The script creates `dist\HMBreachGUI`, containing `HMBreachGUI.exe`, the
-solver and their runtime dependencies. It refuses to overwrite an existing
-package. The bundled GUI selects the adjacent solver by default. Keep the
-package and solver out of the public source repository.
+The output directory defaults to `dist\HMBreachGUI`; `--output` lets you
+choose another directory without overwriting an existing package. The package
+contains `HMBreachGUI.exe`, the solver and their runtime dependencies. The
+build checks that no Qt or PyQtGraph artifacts were bundled and collects
+third-party license files under `licenses\`. The GUI selects the adjacent
+solver by default. Keep the package and solver out of the public source
+repository.
 
 This is a local test package, not a release: dependency license notices and
 obligations still need review, and the package must be verified on a clean
@@ -45,16 +51,15 @@ Windows machine before distribution.
 ## Tests
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_gui*.py -v
-.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_pyside_prototype.py -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Solver integration tests are skipped unless a compatible executable is found
-at `build\Release\HMBreach.exe` or `HMBREACH_EXECUTABLE` points to one.
+Solver integration tests are skipped unless `HMBREACH_EXECUTABLE` points to a
+compatible executable or it is available at `build\Release\HMBreach.exe`.
 
 ## License
 
 The GUI source is licensed under the [MIT License](./LICENSE). Dependencies,
-including PySide6, Qt, PyQtGraph and NumPy, have their own licenses. The
+including Matplotlib, NumPy, Pillow and Tcl/Tk, have their own licenses. The
 separately supplied calculation executable is not covered by this license.
 Distributors are responsible for the applicable dependency license obligations.

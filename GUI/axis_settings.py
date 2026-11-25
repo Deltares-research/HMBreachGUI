@@ -3,10 +3,8 @@
 import math
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, localcontext
 
-from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QGridLayout, QLabel, QLineEdit, QMessageBox,
-    QPushButton, QVBoxLayout,
-)
+import tkinter as tk
+from tkinter import messagebox, ttk
 
 
 AXES = (("horizontal", "Horizontal"), ("left", "Left vertical"), ("right", "Right vertical"))
@@ -107,61 +105,67 @@ def axis_parameters(values, settings):
     return lower, upper, interval, label_format
 
 
-class AxisSettingsDialog(QDialog):
+class AxisSettingsDialog(tk.Toplevel):
     def __init__(self, mode, settings, validate, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Axis settings")
+        self.title("Axis settings")
+        if parent is not None:
+            self.transient(parent)
+        self.grab_set()
         self._validate = validate
         self.settings = None
-        layout = QVBoxLayout(self)
-        description = QLabel(
-            f"{'Profile chart' if mode == 'profile' else 'Flow top view'}: "
-            "leave fields blank for automatic values. Enter both limits together."
+        description = ttk.Label(
+            self,
+            text=(
+                f"{'Profile chart' if mode == 'profile' else 'Flow top view'}: "
+                "leave fields blank for automatic values. Enter both limits together."
+            ),
         )
-        description.setWordWrap(True)
-        layout.addWidget(description)
-        grid = QGridLayout()
+        description.grid(row=0, column=0, columnspan=5, sticky="w", padx=8, pady=8)
         for column, title in enumerate(("Axis", "Minimum", "Maximum", "Major tick interval", "Decimal places")):
-            grid.addWidget(QLabel(title), 0, column)
+            ttk.Label(self, text=title).grid(row=1, column=column, sticky="w", padx=4)
         self.fields = {}
         self.decimals = {}
         for row, (key, title) in enumerate(AXES, start=1):
-            grid.addWidget(QLabel(title), row, 0)
+            ttk.Label(self, text=title).grid(row=row + 1, column=0, sticky="w", padx=4, pady=3)
             self.fields[key] = []
             for column, value in enumerate(settings[key][:3], start=1):
-                field = QLineEdit("" if value is None else str(value))
-                field.setPlaceholderText("Automatic")
+                variable = tk.StringVar(value="" if value is None else str(value))
+                field = ttk.Entry(self, textvariable=variable, width=18)
+                field.grid(row=row + 1, column=column, sticky="ew", padx=4, pady=3)
                 if mode == "top" and key == "right":
-                    field.setEnabled(False)
-                self.fields[key].append(field)
-                grid.addWidget(field, row, column)
-            precision = QComboBox()
-            precision.addItem("Automatic", None)
-            for places in (1, 2, 3):
-                precision.addItem(str(places), places)
-            precision.setCurrentIndex(precision.findData(settings[key][3]))
+                    field.state(["disabled"])
+                self.fields[key].append(variable)
+            precision = tk.StringVar(
+                value="Automatic" if settings[key][3] is None else str(settings[key][3])
+            )
+            combo = ttk.Combobox(
+                self, textvariable=precision, values=("Automatic", "1", "2", "3"),
+                state="readonly", width=12,
+            )
             if mode == "top" and key == "right":
-                precision.setEnabled(False)
+                combo.state(["disabled"])
             self.decimals[key] = precision
-            grid.addWidget(precision, row, 4)
-        layout.addLayout(grid)
-        note = QLabel("Ticks are anchored at zero. Settings apply to this plot type for this session.")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        reset = QPushButton("Reset to automatic")
-        buttons.addButton(reset, QDialogButtonBox.ButtonRole.ResetRole)
-        reset.clicked.connect(self._reset)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+            combo.grid(row=row + 1, column=4, sticky="ew", padx=4, pady=3)
+        note = ttk.Label(
+            self, text="Ticks are anchored at zero. Settings apply to this plot type for this session."
+        )
+        note.grid(row=5, column=0, columnspan=5, sticky="w", padx=8, pady=8)
+        buttons = ttk.Frame(self)
+        buttons.grid(row=6, column=0, columnspan=5, sticky="e", padx=8, pady=8)
+        ttk.Button(buttons, text="Reset to automatic", command=self._reset).pack(side="left", padx=4)
+        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="left", padx=4)
+        ttk.Button(buttons, text="OK", command=self.accept).pack(side="left", padx=4)
+        for column in range(1, 5):
+            self.columnconfigure(column, weight=1)
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
 
     def _reset(self):
         for fields in self.fields.values():
             for field in fields:
-                field.clear()
+                field.set("")
         for precision in self.decimals.values():
-            precision.setCurrentIndex(0)
+            precision.set("Automatic")
 
     def accept(self):
         settings = {}
@@ -169,7 +173,7 @@ class AxisSettingsDialog(QDialog):
             for key, title in AXES:
                 values = []
                 for field in self.fields[key]:
-                    text = field.text().strip()
+                    text = field.get().strip()
                     if not text:
                         values.append(None)
                         continue
@@ -180,10 +184,11 @@ class AxisSettingsDialog(QDialog):
                     if not math.isfinite(value):
                         raise ValueError(f"{title}: values must be finite.")
                     values.append(value)
-                settings[key] = (*values, self.decimals[key].currentData())
+                precision = self.decimals[key].get()
+                settings[key] = (*values, None if precision == "Automatic" else int(precision))
             self._validate(settings)
         except ValueError as error:
-            QMessageBox.warning(self, "Invalid axis settings", str(error))
+            messagebox.showwarning("Invalid axis settings", str(error), parent=self)
             return
         self.settings = settings
-        super().accept()
+        self.destroy()
