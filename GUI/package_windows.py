@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tkinter
 from pathlib import Path
 
 
@@ -123,7 +124,108 @@ def _stage_licenses(staging):
         target = license_root / "Tcl-Tk" / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+    _write_license_inventory(license_root, tcl_root)
     return license_root
+
+
+def _write_license_inventory(license_root, tcl_root):
+    rows = []
+    for package in RUNTIME_DISTRIBUTIONS:
+        installed = distribution(package)
+        license_name = _license_declaration(installed.metadata)
+        role = "Build-time" if package == "pyinstaller" else "Runtime"
+        rows.append((package, installed.version, license_name, role, f"{package}/"))
+
+    rows.extend([
+        (
+            "Python",
+            sys.version.split()[0],
+            "Python Software Foundation License",
+            "Runtime",
+            "Python/LICENSE.txt",
+        ),
+        (
+            "Tcl",
+            tkinter.Tcl().eval("info patchlevel"),
+            "Tcl/Tk License",
+            "Runtime",
+            "Tcl-Tk/",
+        ),
+        (
+            "Tk",
+            _tk_version(tcl_root),
+            "Tcl/Tk License",
+            "Runtime",
+            "Tcl-Tk/",
+        ),
+    ])
+
+    lines = [
+        "# Third-party license inventory",
+        "",
+        "Generated from the Python environment configured for",
+        "`GUI/package_windows.py`.",
+        "Package license names come from installed metadata; Python and Tcl/Tk",
+        "license names identify their included license terms. Consult the",
+        "included files for full texts, bundled-component notices, and",
+        "exceptions. The separately supplied HMBreach solver is not included.",
+        "This inventory does not enumerate every bundled native library;",
+        "their versions, licenses, and notices require separate review.",
+        "",
+        "| Component | Version | Declared license | Role | Included license files |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    lines.extend(
+        f"| {name} | {version} | {license_name} | {role} | `{files}` |"
+        for name, version, license_name, role, files in rows
+    )
+    (license_root / "THIRD_PARTY_LICENSES.md").write_text(
+        "\n".join(lines) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _tk_version(tcl_root):
+    for package_index in sorted(tcl_root.glob("tk*/pkgIndex.tcl")):
+        match = re.search(
+            r"^\s*package ifneeded Tk\s+([0-9.]+)",
+            package_index.read_text(encoding="utf-8", errors="replace"),
+            re.MULTILINE,
+        )
+        if match:
+            return match.group(1)
+    raise RuntimeError(f"Unable to determine the Tk version under {tcl_root}.")
+
+
+def _license_declaration(metadata):
+    expression = metadata.get("License-Expression")
+    if expression:
+        return expression
+
+    license_text = metadata.get("License", "").strip()
+    first_line = next(
+        (
+            line.strip()
+            for line in license_text.splitlines()
+            if line.strip() and set(line.strip()) != {"="}
+        ),
+        "",
+    )
+    if first_line.lower().startswith("license agreement") or (
+        first_line.lower().startswith("gpl") and "exception" in first_line.lower()
+    ):
+        return first_line
+
+    classifiers = [
+        classifier.rsplit(" :: ", 1)[-1]
+        for classifier in metadata.get_all("Classifier", [])
+        if classifier.startswith("License ::")
+    ]
+    if classifiers:
+        return "; ".join(classifiers)
+    if first_line:
+        return first_line
+    raise RuntimeError(f"No license declaration found for {metadata.get('Name', 'unknown package')}.")
 
 
 def _verify_no_qt(package):

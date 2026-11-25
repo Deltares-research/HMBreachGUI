@@ -40,13 +40,14 @@ The output directory defaults to `dist\HMBreachGUI`; `--output` lets you
 choose another directory without overwriting an existing package. The package
 contains `HMBreachGUI.exe`, the solver and their runtime dependencies. The
 build checks that no Qt or PyQtGraph artifacts were bundled and collects
-third-party license files under `licenses\`. The GUI selects the adjacent
-solver by default. Keep the package and solver out of the public source
-repository.
+third-party license files and a versioned inventory under `licenses\`. The GUI
+selects the adjacent solver by default. Keep the package and solver out of the
+public source repository.
 
 This is a local test package, not a release: dependency license notices and
 obligations still need review, and the package must be verified on a clean
-Windows machine before distribution.
+Windows machine before distribution. The inventory does not enumerate all
+bundled native libraries or the separately supplied solver.
 
 ## Tests
 
