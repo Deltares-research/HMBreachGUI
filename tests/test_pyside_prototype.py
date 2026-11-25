@@ -2,18 +2,30 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtWidgets import QApplication
 
-from GUI.prototype import PrototypeWindow, ROOT
+from GUI.prototype import PrototypeWindow, ROOT, default_executable
 
 
 EXECUTABLE = Path(os.environ.get(
     "HMBREACH_EXECUTABLE", str(ROOT / "build" / "Release" / "HMBreach.exe")
 )).resolve()
+
+
+class ExecutableLocationTests(unittest.TestCase):
+    def test_packaged_solver_is_next_to_gui_executable(self):
+        executable = ROOT / "some-package" / "HMBreachGUI.exe"
+        with patch("sys.frozen", True, create=True), patch("sys.executable", str(executable)):
+            self.assertEqual(default_executable(), executable.resolve().with_name("HMBreach.exe"))
+
+    def test_source_default_remains_in_build_release(self):
+        with patch("sys.frozen", False, create=True):
+            self.assertEqual(default_executable(), ROOT / "build" / "Release" / "HMBreach.exe")
 
 
 @unittest.skipUnless(EXECUTABLE.is_file(), "Build HMBreach or set HMBREACH_EXECUTABLE")

@@ -24,6 +24,12 @@ from PySide6.QtWidgets import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def default_executable():
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().with_name("HMBreach.exe")
+    return ROOT / "build" / "Release" / "HMBreach.exe"
+
+
 class PrototypeWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -37,7 +43,7 @@ class PrototypeWindow(QMainWindow):
         self.process.errorOccurred.connect(self._process_error)
         self.process.finished.connect(self._process_finished)
 
-        self.executable = QLineEdit(str(ROOT / "build" / "Release" / "HMBreach.exe"))
+        self.executable = QLineEdit(str(default_executable()))
         self.input_file = QLineEdit(str(ROOT / "examples" / "turbulence_input.json"))
         self.output_directory = QLineEdit()
         self.run_button = QPushButton("Run calculation")

@@ -22,6 +22,26 @@ an output working directory. The sample case loads at startup. The solver
 uses the output paths specified in the case and can overwrite existing files,
 including outside the working directory when absolute paths are used.
 
+## Build a local Windows package
+
+On Windows, install the packaging requirements in a virtual environment and
+provide a separately built, compatible solver executable:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r GUI\requirements-packaging.txt
+.\.venv\Scripts\python.exe GUI\package_windows.py --solver C:\path\to\HMBreach.exe
+```
+
+The script creates `dist\HMBreachGUI`, containing `HMBreachGUI.exe`, the
+solver and their runtime dependencies. It refuses to overwrite an existing
+package. The bundled GUI selects the adjacent solver by default. Keep the
+package and solver out of the public source repository.
+
+This is a local test package, not a release: dependency license notices and
+obligations still need review, and the package must be verified on a clean
+Windows machine before distribution.
+
 ## Tests
 
 ```powershell
