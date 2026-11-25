@@ -1,0 +1,30 @@
+{
+  "settings": {
+    "mode": "turbulence",
+    "workbook_file": "hmbres_turbulence_results.xlsx"
+  },
+  "initial_conditions": {
+    "vz_mm_s": 1.0,
+    "initial_layer_thickness_m": 0.5,
+    "initial_froude": 2.0,
+    "initial_concentration_percent": 10.0
+  },
+  "layers": [
+    {
+      "thickness_m": 0.25,
+      "d50_micrometre": 250.0,
+      "porosity_percent": 40.0,
+      "external_gradient": 0.0,
+      "permeability_mm_s": null,
+      "initial_alpha_deg": 40.0
+    },
+    {
+      "thickness_m": 0.3,
+      "d50_micrometre": 200.0,
+      "porosity_percent": 40.0,
+      "external_gradient": 0.0,
+      "permeability_mm_s": null,
+      "initial_alpha_deg": 35.0
+    }
+  ]
+}

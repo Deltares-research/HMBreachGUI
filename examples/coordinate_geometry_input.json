@@ -1,0 +1,40 @@
+{
+  "settings": {
+    "mode": "turbulence",
+    "workbook_file": "coordinate_geometry_results.xlsx",
+    "slope_geometry": [
+      {
+        "x_m": -0.1,
+        "y_m": 0.1
+      },
+      {
+        "x_m": 0.2,
+        "y_m": -0.2
+      },
+      {
+        "x_m": 0.5,
+        "y_m": -0.55
+      }
+    ]
+  },
+  "initial_conditions": {
+    "vz_mm_s": 1.0,
+    "initial_layer_thickness_m": 0.5,
+    "initial_froude": 2.0,
+    "initial_concentration_percent": 10.0
+  },
+  "layers": [
+    {
+      "thickness_m": 0.25,
+      "d50_micrometre": 250.0,
+      "porosity_percent": 40.0,
+      "external_gradient": 0.0
+    },
+    {
+      "thickness_m": 0.3,
+      "d50_micrometre": 200.0,
+      "porosity_percent": 40.0,
+      "external_gradient": 0.0
+    }
+  ]
+}
