@@ -2,6 +2,7 @@ import math
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from GUI.app import CaseWindow
 from GUI.case_io import load_case, read_json
@@ -55,6 +56,40 @@ class GeometryEditorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "increasing X"):
             self.window.editor.case()
         self.assertEqual(geometry.table.item(rows[1], "values"), ("-0.2", "-0.2"))
+
+    def test_drawing_rejects_negative_x_and_positive_y(self):
+        canvas = self.window.editor.geometry.canvas
+        canvas.widget.configure(width=500, height=300)
+        self.window.update_idletasks()
+        canvas.editable = True
+        canvas.points = []
+        canvas.bounds = (-1, 1, -1, 1)
+        added = []
+        canvas.on_add = lambda x, y: added.append((x, y))
+        for point in ((-0.5, -0.5), (0.5, 0.5), (0.5, -0.5)):
+            x, y = canvas.to_screen(*point)
+            canvas._mouse_down(SimpleNamespace(x=x, y=y))
+        self.assertEqual(len(added), 1)
+        self.assertAlmostEqual(added[0][0], 0.5)
+        self.assertAlmostEqual(added[0][1], -0.5)
+
+    def test_fit_always_includes_origin_for_existing_geometry(self):
+        canvas = self.window.editor.geometry.canvas
+        canvas.points = [(2, -2), (3, -3)]
+        canvas.profile = []
+        canvas.fit()
+        left, right, bottom, top = canvas.bounds
+        self.assertLess(left, 0)
+        self.assertGreater(right, 0)
+        self.assertLess(bottom, 0)
+        self.assertGreater(top, 0)
+
+    def test_new_coordinate_geometry_displays_single_origin(self):
+        geometry = self.window.editor.geometry
+        geometry.enabled_var.set(True)
+        geometry._toggle_geometry()
+        self.assertEqual(geometry.points(), [{"x_m": 0.0, "y_m": 0.0}])
+        self.assertEqual(geometry.canvas.points, [(0.0, 0.0)])
 
 
 if __name__ == "__main__":

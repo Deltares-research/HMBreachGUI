@@ -46,6 +46,7 @@ class ChartsTests(unittest.TestCase):
         chart.set_results(self.result_document(points))
         self.assertEqual(chart.left_axis.get_ylabel(), "z (m)")
         self.assertEqual(chart.right_axis.get_ylabel(), "Velocity u (m/s)")
+        self.assertEqual(chart.right_axis.yaxis.get_label_position(), "right")
         self.assertEqual(len(chart.left_axis.lines), 1)
         self.assertEqual(len(chart.right_axis.lines), 1)
 
@@ -59,6 +60,23 @@ class ChartsTests(unittest.TestCase):
         self.assertEqual(len(chart.left_axis.lines), 2)
         self.assertEqual(len(chart.right_axis.lines), 2)
         self.assertEqual(chart.left_axis.lines[-1].get_linestyle(), "--")
+
+    def test_multilayer_legend_is_per_curve_and_colors_are_named(self):
+        chart = self.window.charts_view
+        result = self.result_document([
+            {"x": 0, "z": 0, "h": 0.2, "u": 1, "c": 0.1},
+            {"x": 1, "z": -1, "h": 0.2, "u": 1, "c": 0.1},
+        ])
+        result["profiles"].append({"layer": 2, "points": [
+            {"x": 2, "z": -2, "h": 0.2, "u": 1, "c": 0.1},
+        ]})
+        chart.set_results(result)
+        labels = [text.get_text() for text in chart.figure.legends[0].get_texts()]
+        self.assertEqual(labels, ["Current z (m)", "Current Velocity u (m/s)"])
+        self.assertEqual(list(chart.left_axis.lines[1].get_xdata()), [1, 2])
+        chart.color_buttons[0].set("Red")
+        chart._choose_color(0)
+        self.assertEqual(chart.left_axis.lines[0].get_color(), "#ff0000")
 
     def test_initial_slope_overlay_uses_result_snapshot(self):
         chart = self.window.charts_view

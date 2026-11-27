@@ -56,6 +56,13 @@ class SettingsEditorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "integer"):
             editor.case()
 
+    def test_variant_updates_separate_default_column(self):
+        settings = self.window.editor.settings
+        select(settings.erosion_variant, "variant_1")
+        settings._variant_changed()
+        self.assertEqual(settings._physical_labels["phi_deg"].cget("text"), "32")
+        self.assertEqual(settings._physical_labels["erosion_b"].cget("text"), "0.06")
+
     def test_width_geometry_and_invalid_constants_preserve_input(self):
         editor = self.window.editor
         settings = editor.settings
