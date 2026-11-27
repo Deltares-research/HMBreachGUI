@@ -3,7 +3,7 @@
 import math
 from pathlib import Path
 import tkinter as tk
-from tkinter import colorchooser, filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
@@ -16,6 +16,10 @@ from GUI.results_view import METRICS
 
 
 LABELS = dict(METRICS)
+COLORS = {
+    "Blue": "#0000ff", "Red": "#ff0000", "Green": "#008000",
+    "Black": "#000000", "Orange": "#ff8c00", "Purple": "#800080",
+}
 
 
 def _label(key):
@@ -87,7 +91,7 @@ class ChartsView(ttk.Frame):
             for mode in ("profile", "top")
         }
         self._axis_values = {key: [] for key, _ in AXES}
-        self.colors = ["#0072b2", "#d55e00"]
+        self.colors = [COLORS["Blue"], COLORS["Red"]]
         self.lines = []
 
         selectors = ttk.Frame(self)
@@ -150,13 +154,15 @@ class ChartsView(ttk.Frame):
             command=self._redraw,
         ).pack(side="left", padx=4)
         self.color_buttons = []
-        for index, label in enumerate(("Left colour...", "Right colour...")):
-            button = ttk.Button(
-                appearance, text=label, command=lambda item=index: self._choose_color(item)
+        for index, label in enumerate(("Left colour:", "Right colour:")):
+            ttk.Label(appearance, text=label).pack(side="left", padx=(4, 0))
+            button = ttk.Combobox(
+                appearance, values=tuple(COLORS), state="readonly", width=8,
             )
+            button.current(index)
+            button.bind("<<ComboboxSelected>>", lambda _event, item=index: self._choose_color(item))
             button.pack(side="left", padx=3)
             self.color_buttons.append(button)
-        self._update_colors()
 
         self.figure = Figure(figsize=(8, 5), dpi=100, facecolor="white")
         self.left_axis = self.figure.add_subplot(111)
@@ -190,15 +196,8 @@ class ChartsView(ttk.Frame):
         self.set_results(None)
 
     def _choose_color(self, index):
-        selected = colorchooser.askcolor(self.colors[index], parent=self.winfo_toplevel())[1]
-        if selected:
-            self.colors[index] = selected
-            self._update_colors()
-            self._redraw()
-
-    def _update_colors(self):
-        for button, color in zip(self.color_buttons, self.colors):
-            button.configure(text=f"{color}  Choose colour...")
+        self.colors[index] = COLORS[self.color_buttons[index].get()]
+        self._redraw()
 
     def _validate_axis_settings(self, settings):
         for key, title in AXES:
@@ -298,7 +297,7 @@ class ChartsView(ttk.Frame):
         left_key, right_key = self._selected_key(1), self._selected_key(2)
         for combo in self.variable_combos:
             combo.configure(state="disabled" if top else "readonly")
-        self.color_buttons[1].configure(state="disabled" if top else "normal")
+        self.color_buttons[1].configure(state="disabled" if top else "readonly")
         slope_axes = []
         if not top:
             if (x_key, left_key) in (("x", "z"), ("z", "x")):
@@ -326,6 +325,8 @@ class ChartsView(ttk.Frame):
             self.left_axis.set_ylabel(_label(left_key) if left_key else "")
             self.right_axis.set_ylabel(_label(right_key) if right_key else "")
             self.right_axis.set_visible(True)
+            self.right_axis.yaxis.set_label_position("right")
+            self.right_axis.yaxis.tick_right()
             self.right_axis.spines["right"].set_color(self.colors[1])
             self.right_axis.tick_params(axis="y", colors=self.colors[1])
             self.right_axis.yaxis.label.set_color(self.colors[1])
@@ -366,7 +367,7 @@ class ChartsView(ttk.Frame):
                     for sign, side in ((1, "+ width/2"), (-1, "- width/2")):
                         self._add_segments(
                             profile, "x", "width_m", self.left_axis, self.colors[0],
-                            f"{source} L{profile['layer']} {side}", dashed,
+                            f"{source} {side}", dashed,
                             x_values, left_values, sign, previous_point,
                         )
                     missing_width |= any(
@@ -381,7 +382,7 @@ class ChartsView(ttk.Frame):
                         if key is not None:
                             self._add_segments(
                                 profile, x_key, key, axis, color,
-                                f"{source} L{profile['layer']} {_label(key)}", dashed,
+                                f"{source} {_label(key)}", dashed,
                                 x_values, values, previous_point=previous_point,
                             )
                 previous_profile = profile
@@ -413,6 +414,9 @@ class ChartsView(ttk.Frame):
 
         handles, labels = self.left_axis.get_legend_handles_labels()
         right_handles, right_labels = self.right_axis.get_legend_handles_labels()
+        unique = dict(zip(labels + right_labels, handles + right_handles))
+        labels, handles = list(unique), list(unique.values())
+        right_handles, right_labels = [], []
         if handles or right_handles:
             self.figure.legend(
                 handles + right_handles, labels + right_labels, loc="lower center",

@@ -100,7 +100,7 @@ class SlopeCanvas(ttk.Frame):
         self.redraw()
 
     def fit(self):
-        values = self.points + self.profile
+        values = self.points + self.profile + [(0.0, 0.0)]
         if not values:
             values = [(0.0, 0.0), (1.0, -1.0)]
         xs = [p[0] for p in values]
@@ -179,13 +179,17 @@ class SlopeCanvas(ttk.Frame):
             point_coords = [
                 coordinate for point in self.points for coordinate in self.to_screen(*point)
             ]
-            canvas.create_line(
-                *point_coords, fill="#006198", width=2, dash=(5, 3), tags="plot"
-            )
+            if len(self.points) >= 2:
+                canvas.create_line(
+                    *point_coords, fill="#006198", width=2, dash=(5, 3), tags="plot"
+                )
             for index, point in enumerate(self.points):
                 x, y = self.to_screen(*point)
                 color = "#d62728" if index == self.selected else "#0072b2"
                 canvas.create_oval(x - 5, y - 5, x + 5, y + 5, fill=color, outline=color)
+        if (0.0, 0.0) not in self.points or not self.editable:
+            x, y = self.to_screen(0.0, 0.0)
+            canvas.create_oval(x - 5, y - 5, x + 5, y + 5, fill="#0072b2", outline="#0072b2")
 
     def _mouse_down(self, event):
         if not self.editable:
@@ -205,12 +209,15 @@ class SlopeCanvas(ttk.Frame):
                 self.on_select(self.selected)
             self.redraw()
         else:
-            if self.on_add is not None:
-                self.on_add(*self.to_world(x, y))
+            point = self.to_world(x, y)
+            if point[0] >= 0 and point[1] <= 0 and self.on_add is not None:
+                self.on_add(*point)
 
     def _mouse_drag(self, event):
         if self._dragging and self.selected >= 0 and self.on_move is not None:
-            self.on_move(self.selected, *self.to_world(event.x, event.y))
+            point = self.to_world(event.x, event.y)
+            if point[0] >= 0 and point[1] <= 0:
+                self.on_move(self.selected, *point)
 
     def _mouse_up(self, _event):
         self._dragging = False
@@ -234,7 +241,8 @@ class GeometryEditor(ttk.Frame):
         hint = ttk.Label(
             self,
             text=(
-            "New slopes start at (0, 0). Click to append points; drag a point to move it. "
+            "New slopes start at (0, 0). Draw points only at X >= 0 and Y <= 0. "
+            "Click to append points; drag a point to move it. "
             "Edit exact coordinates in the table. "
             "Coordinates must descend from left to right and cover all layers. "
             "Layer angles are ignored and omitted from saved input while coordinates are used."

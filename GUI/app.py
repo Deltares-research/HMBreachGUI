@@ -1,9 +1,12 @@
 """Tkinter case editor and HMBreach solver integration."""
 
+import json
+import os
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from GUI.case_editor import CaseEditor
@@ -15,6 +18,11 @@ from GUI.results_view import ResultsView
 
 def _read_workbook(path, case):
     return validate_results(results_from_workbook(path, case))
+
+
+def _preferences_path():
+    base = os.environ.get("APPDATA")
+    return (Path(base) if base else Path.home() / ".config") / "HMBreachGUI" / "preferences.json"
 
 
 class CaseWindow(PrototypeWindow):
@@ -43,6 +51,7 @@ class CaseWindow(PrototypeWindow):
         self.charts_view = ChartsView(self.tabs)
         self.tabs.add(self.charts_view, text="Charts")
         self.tabs.add(self.editor.settings, text="Constants")
+        self._build_help_page()
         self.result_status = self.results_view.status
         self.input_entry.configure(state="readonly")
         self._build_input_page()
@@ -50,6 +59,80 @@ class CaseWindow(PrototypeWindow):
             self.load_input(ROOT / "examples" / "turbulence_input.json")
         except (OSError, ValueError) as error:
             self.status.set(f"Could not load sample input: {error}")
+        self._restore_working_directory()
+
+    def _build_help_page(self):
+        page = ttk.Frame(self.tabs, padding=8)
+        self.tabs.add(page, text="Help")
+        ttk.Label(
+            page,
+            text=("Open the scientific README associated with your solver. "
+                  "The GUI cannot verify that the document matches the executable."),
+            wraplength=900,
+        ).pack(fill="x", pady=(0, 5))
+        ttk.Button(page, text="Open scientific README...", command=self._open_scientific_readme).pack(
+            anchor="w", pady=4
+        )
+        self.help_status = ttk.Label(page, text="No scientific documentation loaded.")
+        self.help_status.pack(fill="x")
+        frame = ttk.Frame(page)
+        frame.pack(fill="both", expand=True)
+        self.help_text = tk.Text(frame, wrap="word", state="disabled")
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.help_text.yview)
+        self.help_text.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.help_text.pack(side="left", fill="both", expand=True)
+
+    def _open_scientific_readme(self):
+        filename = filedialog.askopenfilename(
+            parent=self, title="Open scientific documentation",
+            filetypes=(("Markdown files", "*.md"), ("Text files", "*.txt"), ("All files", "*.*")),
+        )
+        if not filename:
+            return
+        try:
+            text = Path(filename).read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            messagebox.showerror("Unable to open documentation", str(error), parent=self)
+            return
+        self.help_text.configure(state="normal")
+        self.help_text.delete("1.0", "end")
+        self.help_text.insert("1.0", text)
+        self.help_text.configure(state="disabled")
+        self.help_status.configure(text=f"Scientific documentation: {filename} (Markdown source)")
+
+    def _restore_working_directory(self):
+        path = _preferences_path()
+        try:
+            with path.open(encoding="utf-8") as stream:
+                preferences = json.load(stream)
+            directory = preferences["working_directory"]
+            if not isinstance(directory, str) or not Path(directory).is_dir():
+                raise ValueError("The saved working directory no longer exists.")
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            self.status.set(f"Unable to restore working directory: {error}")
+            return
+        self.output_directory.set(directory)
+
+    def _save_working_directory(self):
+        directory = self.output_directory.get().strip()
+        if not directory or not Path(directory).is_dir():
+            return
+        path = _preferences_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps({"working_directory": str(Path(directory).resolve())}, indent=2),
+                encoding="utf-8",
+            )
+        except OSError as error:
+            messagebox.showwarning("Unable to remember working directory", str(error), parent=self)
+
+    def _choose_directory(self):
+        super()._choose_directory()
+        self._save_working_directory()
 
     def _build_input_page(self):
         buttons = ttk.Frame(self.input_page)
@@ -176,6 +259,7 @@ class CaseWindow(PrototypeWindow):
             self.status.set("Select an existing HMBreach executable.")
             self.tabs.select(self.run_page)
             return
+        self._save_working_directory()
         if self._results_dirty and not messagebox.askyesno(
             "Replace results?",
             "Replace calculation results that have not been saved in the case?",
@@ -291,6 +375,7 @@ class CaseWindow(PrototypeWindow):
             "Discard changes?", "Discard unsaved changes?", parent=self
         ):
             return
+        self._save_working_directory()
         self.destroy()
 
     def set_results(self, results):

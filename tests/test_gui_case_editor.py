@@ -2,6 +2,8 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from GUI.app import CaseWindow
 from GUI.case_io import load_case, read_json, validate_results
@@ -25,6 +27,50 @@ class CaseEditorTests(unittest.TestCase):
     def test_case_editor_is_contained_in_input_tab(self):
         self.assertIs(self.window.editor.master, self.window.input_page)
         self.assertIn(self.window.editor, self.window.input_page.winfo_children())
+
+    def test_layer_display_order_and_model_choices(self):
+        editor = self.window.editor
+        columns = list(editor.table.cget("displaycolumns"))
+        self.assertEqual(columns[1:6], [
+            "d50_micrometre", "user_d15", "d15_micrometre",
+            "porosity_percent", "effective_permeability",
+        ])
+        self.assertIs(editor.settings.mode.master.master, editor)
+        self.assertIs(editor.settings.width_model.master, editor.settings.mode.master)
+        self.assertIs(editor.settings.erosion_variant.master, editor.settings.mode.master)
+
+    def test_editing_reordered_layer_column_updates_correct_field(self):
+        editor = self.window.editor
+        self.window.deiconify()
+        self.window.update()
+        row = editor.table.get_children()[0]
+        x, y, width, height = editor.table.bbox(row, "#3")
+        editor._begin_cell_edit(SimpleNamespace(x=x + width // 2, y=y + height // 2))
+        entry = editor.table.winfo_children()[-1]
+        entry.delete(0, "end")
+        entry.insert(0, "true")
+        entry.focus_force()
+        self.window.update()
+        entry.event_generate("<Return>")
+        self.window.update()
+        self.assertEqual(editor.table.item(row, "values")[5], "true")
+
+    def test_working_directory_is_remembered_and_help_loads_selected_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            preferences = path / "settings" / "preferences.json"
+            document = path / "scientific.md"
+            document.write_text("# Scientific model\nEquations", encoding="utf-8")
+            with patch("GUI.app._preferences_path", return_value=preferences):
+                self.window.output_directory.set(directory)
+                self.window._save_working_directory()
+                self.window.output_directory.set("")
+                self.window._restore_working_directory()
+                self.assertEqual(self.window.output_directory.get(), str(path.resolve()))
+            with patch("GUI.app.filedialog.askopenfilename", return_value=str(document)):
+                self.window._open_scientific_readme()
+            self.assertEqual(self.window.help_text.get("1.0", "end-1c"), "# Scientific model\nEquations")
+            self.assertIn(str(document), self.window.help_status.cget("text"))
 
     def test_round_trip_preserves_geometry_and_other_settings(self):
         source = ROOT / "examples" / "coordinate_geometry_input.json"

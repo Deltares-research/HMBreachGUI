@@ -53,7 +53,11 @@ class CaseEditor(ttk.Frame):
         self._layers = []
         self.dirty = False
         self._loading = False
-        self.settings = SettingsEditor(tabs_parent or master, on_change=self._settings_changed)
+        choices = ttk.LabelFrame(self, text="Model choices", padding=6)
+        choices.pack(fill="x", padx=8, pady=(4, 2))
+        self.settings = SettingsEditor(
+            tabs_parent or master, on_change=self._settings_changed, model_parent=choices
+        )
         self.geometry = GeometryEditor(
             tabs_parent or master,
             on_change=self._geometry_changed,
@@ -87,6 +91,11 @@ class CaseEditor(ttk.Frame):
         table_frame.pack(fill="both", expand=True, padx=8, pady=4)
         columns = tuple(key for key, _, _ in LAYER_FIELDS) + ("effective_permeability",)
         self.table = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
+        self.table.configure(displaycolumns=(
+            "thickness_m", "d50_micrometre", "user_d15", "d15_micrometre",
+            "porosity_percent", "effective_permeability", "external_gradient",
+            "permeability_mm_s", "initial_alpha_deg", "flow_width_m",
+        ))
         for key, label, _optional in LAYER_FIELDS:
             self.table.heading(key, text=label)
             self.table.column(key, width=145, minwidth=90, stretch=False)
@@ -106,7 +115,8 @@ class CaseEditor(ttk.Frame):
             self,
             text=(
                 "Effective permeability is a preview; leave the override blank to use "
-                "the solver's calculated value."
+                "the solver's calculated value. Gradient is the dimensionless external "
+                "hydraulic gradient i for each layer."
             ),
             wraplength=900,
         ).pack(fill="x", padx=8, pady=2)
@@ -196,10 +206,13 @@ class CaseEditor(ttk.Frame):
         column_id = self.table.identify_column(event.x)
         if not row_id or not column_id.startswith("#"):
             return
-        column = int(column_id[1:]) - 1
-        if column >= len(LAYER_FIELDS):
+        display_index = int(column_id[1:]) - 1
+        key = self.table.cget("displaycolumns")[display_index]
+        columns = self.table.cget("columns")
+        column = columns.index(key)
+        if key == "effective_permeability":
             return
-        if column == 7 and self.geometry.enabled_var.get():
+        if key == "initial_alpha_deg" and self.geometry.enabled_var.get():
             return
         box = self.table.bbox(row_id, column_id)
         if not box:

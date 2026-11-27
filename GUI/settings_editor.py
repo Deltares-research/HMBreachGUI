@@ -49,7 +49,7 @@ def _number(text, label, integer=False):
 
 
 class SettingsEditor(ttk.Frame):
-    def __init__(self, master=None, on_change=None):
+    def __init__(self, master=None, on_change=None, model_parent=None):
         super().__init__(master)
         self.on_change = on_change
         self._loading = False
@@ -79,17 +79,28 @@ class SettingsEditor(ttk.Frame):
         )
         intro.pack(fill="x", pady=(0, 6))
 
-        model = ttk.LabelFrame(contents, text="Model and flow width", padding=6)
-        model.pack(fill="x", pady=4)
-        self.mode = self._combo(model, "Calculation mode", (
+        if model_parent is None:
+            choices = ttk.LabelFrame(contents, text="Model choices", padding=6)
+            choices.pack(fill="x", pady=4)
+        else:
+            choices = model_parent
+        self.mode = self._combo(choices, "Calculation mode", (
             ("Default (breach)", None), ("Breach", "breach"), ("Turbulence", "turbulence"),
         ))
-        self.width_model = self._combo(model, "Flow-width model", (
+        self.width_model = self._combo(choices, "Flow-width model", (
             ("Default (B-Constant)", None), ("B-Constant", "b_constant"),
             ("Unit width (B-Constant alias)", "unit_width"), ("B-Fit", "b_fit"),
             ("B-Calc / fanning", "b_calc"), ("Fanning (B-Calc alias)", "fanning"),
             ("Width geometry", "geometry"),
         ))
+        self.erosion_variant = self._combo(choices, "Erosion formulation", (
+            ("Default (Variant 2)", None), ("Variant 1", "variant_1"),
+            ("Variant 2", "variant_2"),
+        ))
+        self.erosion_variant.bind("<<ComboboxSelected>>", self._variant_changed, add="+")
+
+        model = ttk.LabelFrame(contents, text="Flow-width settings", padding=6)
+        model.pack(fill="x", pady=4)
         self.fit_type = self._combo(model, "B-Fit function", (
             ("Default (Poly4)", None), ("Straight line", "straight_line"),
             ("Poly2", "poly2"), ("Poly3", "poly3"), ("Poly4", "poly4"),
@@ -100,10 +111,10 @@ class SettingsEditor(ttk.Frame):
         ttk.Label(
             model, text="B-Fit settings apply only in B-Fit mode; clear them when switching modes.",
             wraplength=900,
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=3)
-        ttk.Label(model, text="Width geometry points").grid(row=5, column=0, sticky="nw", pady=3)
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=3)
+        ttk.Label(model, text="Width geometry points").grid(row=3, column=0, sticky="nw", pady=3)
         table_frame = ttk.Frame(model)
-        table_frame.grid(row=5, column=1, sticky="ew", pady=3)
+        table_frame.grid(row=3, column=1, sticky="ew", pady=3)
         self.width_table = ttk.Treeview(table_frame, columns=("s_m", "width_m"), show="headings", height=5)
         self.width_table.heading("s_m", text="Distance s (m)")
         self.width_table.heading("width_m", text="Width (m)")
@@ -120,22 +131,27 @@ class SettingsEditor(ttk.Frame):
         ttk.Label(
             model, text="Width geometry points are valid only in width-geometry mode.",
             wraplength=900,
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=3)
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=3)
         model.columnconfigure(1, weight=1)
 
         physical = ttk.LabelFrame(contents, text="Physical constants", padding=6)
         physical.pack(fill="x", pady=4)
-        self.erosion_variant = self._combo(physical, "Erosion formulation", (
-            ("Default (Variant 2)", None), ("Variant 1", "variant_1"),
-            ("Variant 2", "variant_2"),
-        ))
-        self.erosion_variant.bind("<<ComboboxSelected>>", self._variant_changed, add="+")
+        ttk.Label(physical, text="Constant").grid(row=0, column=0, sticky="w")
+        ttk.Label(physical, text="Default").grid(row=0, column=1, sticky="w", padx=8)
+        ttk.Label(physical, text="Override").grid(row=0, column=2, sticky="w")
         self.physical_fields = {}
         self._physical_labels = {}
         for key, label, default in PHYSICAL_FIELDS:
-            variable, label_widget = self._field(physical, label, default, return_label=True)
+            row = len(self.physical_fields) + 1
+            ttk.Label(physical, text=label).grid(row=row, column=0, sticky="w", pady=2)
+            label_widget = ttk.Label(physical, text=default)
+            label_widget.grid(row=row, column=1, sticky="w", padx=8, pady=2)
+            variable = tk.StringVar()
+            variable.trace_add("write", self._edited)
+            ttk.Entry(physical, textvariable=variable).grid(row=row, column=2, sticky="ew", pady=2)
             self.physical_fields[key] = variable
             self._physical_labels[key] = label_widget
+        physical.columnconfigure(2, weight=1)
 
         numerical = ttk.LabelFrame(contents, text="Numerical options", padding=6)
         numerical.pack(fill="x", pady=4)
@@ -216,7 +232,7 @@ class SettingsEditor(ttk.Frame):
         else:
             phi, erosion_b = "variant-dependent", "variant-dependent"
         for key, default in (("phi_deg", phi), ("erosion_b", erosion_b)):
-            self._physical_labels[key].configure(text=f"{dict((k, l) for k, l, _ in PHYSICAL_FIELDS)[key]}  (default: {default})")
+            self._physical_labels[key].configure(text=default)
 
     def set_case(self, case):
         settings = case.get("settings", {})
@@ -361,6 +377,7 @@ class SettingsEditor(ttk.Frame):
                 variable.set("")
         finally:
             self._loading = False
+        self._variant_changed()
         self._edited()
 
     def apply_to_case(self, case):

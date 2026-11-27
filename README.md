@@ -19,9 +19,15 @@ python -m venv .venv
 ```
 
 On the Run tab, browse to the separately supplied `HMBreach.exe` and select
-an output working directory. The sample case loads at startup. The solver
+an output working directory. The GUI remembers the last existing working
+directory in the user's application settings. The sample case loads at startup. The solver
 uses the output paths specified in the case and can overwrite existing files,
 including outside the working directory when absolute paths are used.
+
+The Help tab opens a user-selected scientific README as Markdown source. Select
+the documentation corresponding to your solver executable; their versions are
+not checked by the GUI. The Input tab's gradient is the dimensionless external
+hydraulic gradient for each layer.
 
 ## Build a local Windows package
 
