@@ -4,16 +4,29 @@ import json
 import os
 import sys
 import tempfile
+import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from PIL import Image, ImageTk
+from latex2mathml.exceptions import (
+    DenominatorNotFoundError, DoubleSubscriptsError, DoubleSuperscriptsError,
+    ExtraLeftOrMissingRightError, InvalidAlignmentError, InvalidStyleForGenfracError,
+    InvalidWidthError, LimitsMustFollowMathOperatorError, MissingEndError,
+    MissingSuperScriptOrSubscriptError, NoAvailableTokensError, NumeratorNotFoundError,
+)
+
 from GUI.case_editor import CaseEditor
 from GUI.case_io import load_case, read_json, results_from_workbook, validate_results, write_json
 from GUI.charts_view import ChartsView
-from GUI.prototype import PrototypeWindow, ROOT
+from GUI.help_view import render_document
+from GUI.prototype import DEFAULT_INPUT, PrototypeWindow, ROOT
 from GUI.results_view import ResultsView
+
+
+GUI_VERSION = "0.1.0"
 
 
 def _read_workbook(path, case):
@@ -38,6 +51,28 @@ class CaseWindow(PrototypeWindow):
         self._result_executor = None
         self._result_files = None
 
+        self.tabs.pack_forget()
+        header = tk.Frame(self, background="#003b5c")
+        header.pack(fill="x")
+        self.header_title = tk.Label(
+            header, text=f"HMBreach GUI v{GUI_VERSION} (development build)",
+            background="#003b5c", foreground="white",
+            font=("TkDefaultFont", 14, "bold"),
+        )
+        self.header_title.pack(side="left", padx=12)
+        try:
+            with Image.open(ROOT / "Deltares_logo_Wit_RGB.png") as image:
+                image.thumbnail((180, 52), Image.Resampling.LANCZOS)
+                self._logo = ImageTk.PhotoImage(image, master=self)
+        except OSError as error:
+            tk.Label(
+                header, text=f"Deltares logo unavailable: {error}",
+                background="#003b5c", foreground="white",
+            ).pack(side="right", padx=8)
+        else:
+            tk.Label(header, image=self._logo, background="#003b5c").pack(side="right", padx=8)
+        self.tabs.pack(fill="both", expand=True)
+
         self.tabs.forget(self.run_page)
         self.input_page = ttk.Frame(self.tabs, padding=8)
         self.editor = CaseEditor(self.input_page, tabs_parent=self.tabs)
@@ -56,50 +91,47 @@ class CaseWindow(PrototypeWindow):
         self.input_entry.configure(state="readonly")
         self._build_input_page()
         try:
-            self.load_input(ROOT / "examples" / "turbulence_input.json")
+            self.load_input(DEFAULT_INPUT)
         except (OSError, ValueError) as error:
             self.status.set(f"Could not load sample input: {error}")
         self._restore_working_directory()
+        self._size_initial_window()
+
+    def _size_initial_window(self):
+        screen_limit = max(
+            self.minsize()[1],
+            min(self.winfo_screenheight() - 80, (self.winfo_screenwidth() - 80) * 2 // 3),
+        )
+        height = min(800, screen_limit)
+        height -= height % 2
+        self.geometry(f"{height * 3 // 2}x{height}")
 
     def _build_help_page(self):
         page = ttk.Frame(self.tabs, padding=8)
         self.tabs.add(page, text="Help")
-        ttk.Label(
-            page,
-            text=("Open the scientific README associated with your solver. "
-                  "The GUI cannot verify that the document matches the executable."),
-            wraplength=900,
-        ).pack(fill="x", pady=(0, 5))
-        ttk.Button(page, text="Open scientific README...", command=self._open_scientific_readme).pack(
-            anchor="w", pady=4
-        )
-        self.help_status = ttk.Label(page, text="No scientific documentation loaded.")
-        self.help_status.pack(fill="x")
-        frame = ttk.Frame(page)
-        frame.pack(fill="both", expand=True)
-        self.help_text = tk.Text(frame, wrap="word", state="disabled")
-        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.help_text.yview)
-        self.help_text.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        self.help_text.pack(side="left", fill="both", expand=True)
+        ttk.Button(
+            page, text="Open formatted documentation in browser",
+            command=self._open_formatted_help,
+        ).pack(anchor="w", pady=4)
 
-    def _open_scientific_readme(self):
-        filename = filedialog.askopenfilename(
-            parent=self, title="Open scientific documentation",
-            filetypes=(("Markdown files", "*.md"), ("Text files", "*.txt"), ("All files", "*.*")),
-        )
-        if not filename:
-            return
+    def _open_formatted_help(self):
         try:
-            text = Path(filename).read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as error:
-            messagebox.showerror("Unable to open documentation", str(error), parent=self)
-            return
-        self.help_text.configure(state="normal")
-        self.help_text.delete("1.0", "end")
-        self.help_text.insert("1.0", text)
-        self.help_text.configure(state="disabled")
-        self.help_status.configure(text=f"Scientific documentation: {filename} (Markdown source)")
+            path = ROOT / "SCIENTIFICREADME.md"
+            html = render_document(path.read_text(encoding="utf-8"), path)
+            directory = _preferences_path().parent / "documentation"
+            directory.mkdir(parents=True, exist_ok=True)
+            output = directory / "scientific-readme.html"
+            output.write_text(html, encoding="utf-8")
+            if not webbrowser.open(output.as_uri(), new=2):
+                raise OSError("No browser could be opened.")
+        except (
+            OSError, UnicodeError, ValueError, DenominatorNotFoundError,
+            DoubleSubscriptsError, DoubleSuperscriptsError, ExtraLeftOrMissingRightError,
+            InvalidAlignmentError, InvalidStyleForGenfracError, InvalidWidthError,
+            LimitsMustFollowMathOperatorError, MissingEndError,
+            MissingSuperScriptOrSubscriptError, NoAvailableTokensError, NumeratorNotFoundError,
+        ) as error:
+            messagebox.showerror("Unable to display documentation", str(error), parent=self)
 
     def _restore_working_directory(self):
         path = _preferences_path()
@@ -170,6 +202,7 @@ class CaseWindow(PrototypeWindow):
                 parent=self,
             )
             return
+        self.editor.commit_pending_edits()
         if (self.editor.dirty or self._results_dirty) and not messagebox.askyesno(
             "Discard changes?", "Discard unsaved input edits or calculation results?", parent=self
         ):
@@ -309,6 +342,7 @@ class CaseWindow(PrototypeWindow):
                     text="Calculation failed; previously loaded results were not changed."
                 )
                 self.status.set(f"Calculation failed (exit code {exit_code}).")
+                self.run_button.configure(state="normal")
                 return
             case = self._running_case
             if case is None:
@@ -371,6 +405,7 @@ class CaseWindow(PrototypeWindow):
         if self._is_running():
             super()._close()
             return
+        self.editor.commit_pending_edits()
         if (self.editor.dirty or self._results_dirty) and not messagebox.askyesno(
             "Discard changes?", "Discard unsaved changes?", parent=self
         ):

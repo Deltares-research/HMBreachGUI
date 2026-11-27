@@ -5,6 +5,8 @@ import tkinter as tk
 from copy import deepcopy
 from tkinter import ttk
 
+from GUI.table_edit import TableCellEditor
+
 
 def _interpolate(a, b, y):
     return a[0] + (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1])
@@ -71,6 +73,53 @@ def _x_at_y(profile, y):
     return profile[-1][0]
 
 
+def split_profile_layers(profile, thicknesses):
+    """Split material layers at slope bends, extending the last material if needed."""
+    if not thicknesses or any(not math.isfinite(t) or t <= 0 for t in thicknesses):
+        raise ValueError("Layer thicknesses must be finite and positive.")
+    if len(profile) < 2:
+        raise ValueError("Slope geometry must contain at least two points.")
+    depth = -profile[-1][1]
+    if not math.isfinite(depth) or depth <= 0:
+        raise ValueError("The slope must descend below y=0.")
+    material_edges = []
+    current = 0.0
+    for thickness in thicknesses[:-1]:
+        current += thickness
+        if not math.isfinite(current):
+            raise ValueError("Total layer thickness must be finite.")
+        material_edges.append(current)
+    edges = [0.0, depth]
+    edges.extend(-point[1] for point in profile[1:-1] if 0 < -point[1] < depth)
+    edges.extend(edge for edge in material_edges if 0 < edge < depth)
+    edges.sort()
+    unique = [edges[0]]
+    for edge in edges[1:]:
+        if not math.isclose(edge, unique[-1], rel_tol=1e-12, abs_tol=0.0):
+            unique.append(edge)
+        elif edge == depth:
+            unique[-1] = depth
+    result = []
+    for top, bottom in zip(unique, unique[1:]):
+        middle = top + (bottom - top) / 2
+        material = sum(middle > edge for edge in material_edges)
+        for a, b in zip(profile, profile[1:]):
+            if -a[1] <= middle <= -b[1]:
+                dx, dy = b[0] - a[0], a[1] - b[1]
+                if not math.isfinite(dx) or not math.isfinite(dy) or dx <= 0 or dy <= 0:
+                    raise ValueError("Slope segments within layers must descend with increasing X.")
+                angle = math.degrees(math.atan2(dy, dx))
+                if not 0 < angle < 90:
+                    raise ValueError("Slope segment angles must be between 0 and 90 degrees.")
+                result.append((material, bottom - top, angle))
+                break
+        else:
+            raise ValueError("Slope geometry does not cover the layer depth.")
+    if not result:
+        raise ValueError("The slope must descend below y=0.")
+    return result
+
+
 class SlopeCanvas(ttk.Frame):
     def __init__(self, master=None):
         super().__init__(master)
@@ -79,6 +128,9 @@ class SlopeCanvas(ttk.Frame):
         self.points = []
         self.profile = []
         self.layers = []
+        self.reference_profile = []
+        self.reference_layers = []
+        self._grain_colors = {}
         self.selected = -1
         self.editable = False
         self.lock_origin = False
@@ -100,7 +152,7 @@ class SlopeCanvas(ttk.Frame):
         self.redraw()
 
     def fit(self):
-        values = self.points + self.profile + [(0.0, 0.0)]
+        values = self.points + self.profile + self.reference_profile + [(0.0, 0.0)]
         if not values:
             values = [(0.0, 0.0), (1.0, -1.0)]
         xs = [p[0] for p in values]
@@ -147,34 +199,48 @@ class SlopeCanvas(ttk.Frame):
         canvas.create_rectangle(rect_left, rect_top, rect_right, rect_bottom, outline="#333333")
         canvas.create_text((rect_left + rect_right) / 2, rect_bottom + 31, text="X (m)")
         canvas.create_text(20, 12, text="Y (m)")
-        if self.profile:
-            grains = sorted(set(layer["d50"] for layer in self.layers))
+        fill_profile = self.profile or self.reference_profile
+        fill_layers = self.layers if self.profile else self.reference_layers
+        if fill_profile:
+            grains = sorted(set(layer["d50"] for layer in fill_layers))
+            for index, grain in enumerate(grains):
+                if grain not in self._grain_colors:
+                    fraction = index / max(1, len(grains) - 1)
+                    self._grain_colors[grain] = "#{:02x}{:02x}{:02x}".format(
+                        round(253 - 113 * fraction),
+                        round(231 - 150 * fraction),
+                        round(37 - 27 * fraction),
+                    )
             depth = 0.0
-            for index, layer in enumerate(self.layers, 1):
+            for index, layer in enumerate(fill_layers, 1):
                 top = -depth
                 depth += layer["thickness"]
                 bottom = -depth
-                fraction = grains.index(layer["d50"]) / max(1, len(grains) - 1)
-                color = "#{:02x}{:02x}{:02x}".format(
-                    round(253 - 113 * fraction),
-                    round(231 - 150 * fraction),
-                    round(37 - 27 * fraction),
-                )
-                left = self.profile[0][0]
-                polygon = [(left, top), (_x_at_y(self.profile, top), top)]
-                polygon.extend(p for p in self.profile if bottom < p[1] < top)
-                polygon.extend([(_x_at_y(self.profile, bottom), bottom), (left, bottom)])
+                color = self._grain_colors[layer["d50"]]
+                left = fill_profile[0][0]
+                polygon = [(left, top), (_x_at_y(fill_profile, top), top)]
+                polygon.extend(p for p in fill_profile if bottom < p[1] < top)
+                polygon.extend([(_x_at_y(fill_profile, bottom), bottom), (left, bottom)])
                 flat_points = [coordinate for point in polygon for coordinate in self.to_screen(*point)]
                 canvas.create_polygon(
-                    *flat_points, fill=color, outline="#806b47", width=1, tags="plot"
+                    *flat_points, fill=color, outline="#806b47", width=1,
+                    tags=("plot", "material-layer")
                 )
                 middle = (top + bottom) / 2
-                label_x = (left + _x_at_y(self.profile, middle)) / 2
+                label_x = (left + _x_at_y(fill_profile, middle)) / 2
                 canvas.create_text(*self.to_screen(label_x, middle), text=str(index), fill="#333333")
+        if self.profile:
             profile_points = [
                 coordinate for point in self.profile for coordinate in self.to_screen(*point)
             ]
             canvas.create_line(*profile_points, fill="#0072b2", width=3, tags="plot")
+        if self.editable and len(self.reference_profile) >= 2:
+            reference = [
+                coordinate for point in self.reference_profile for coordinate in self.to_screen(*point)
+            ]
+            canvas.create_line(
+                *reference, fill="#555555", width=2, dash=(5, 3), tags="reference-slope"
+            )
         if self.editable and self.points:
             point_coords = [
                 coordinate for point in self.points for coordinate in self.to_screen(*point)
@@ -224,10 +290,11 @@ class SlopeCanvas(ttk.Frame):
 
 
 class GeometryEditor(ttk.Frame):
-    def __init__(self, master=None, on_change=None, on_match_bottom=None):
+    def __init__(self, master=None, on_change=None, on_match_bottom=None, on_update_layers=None):
         super().__init__(master)
         self.on_change = on_change
         self.on_match_bottom = on_match_bottom
+        self.on_update_layers = on_update_layers
         self._loading = False
         self._original_points = []
         self._lock_origin = False
@@ -245,6 +312,7 @@ class GeometryEditor(ttk.Frame):
             "Click to append points; drag a point to move it. "
             "Edit exact coordinates in the table. "
             "Coordinates must descend from left to right and cover all layers. "
+            "The dashed grey line shows the original slope while drawing. "
             "Layer angles are ignored and omitted from saved input while coordinates are used."
             ),
             wraplength=900,
@@ -269,7 +337,8 @@ class GeometryEditor(ttk.Frame):
         self.table.column("y", width=100, anchor="e")
         self.table.pack(fill="both", expand=True)
         self.table.bind("<<TreeviewSelect>>", self._selection_changed)
-        self.table.bind("<Double-1>", self._begin_cell_edit)
+        self._cell_editor = TableCellEditor(self.table)
+        self.table.bind("<Button-1>", self._begin_cell_edit)
         actions = ttk.Frame(controls)
         actions.pack(fill="x", pady=4)
         self.remove_button = ttk.Button(actions, text="Remove selected point", command=self.remove_point)
@@ -278,6 +347,10 @@ class GeometryEditor(ttk.Frame):
             actions, text="Match bottom layer to slope bottom", command=self._match_bottom
         )
         self.match_button.pack(fill="x", pady=2)
+        self.update_layers_button = ttk.Button(
+            actions, text="Update input layers from slope", command=self._update_layers
+        )
+        self.update_layers_button.pack(fill="x", pady=2)
         ttk.Button(actions, text="Fit view", command=self.canvas.fit).pack(fill="x", pady=2)
         self.properties = ttk.Label(controls, wraplength=300)
         self.properties.pack(fill="x", pady=4)
@@ -287,6 +360,9 @@ class GeometryEditor(ttk.Frame):
         self.depth_warning.pack(fill="x", padx=8, pady=(2, 8))
 
     def set_case(self, case):
+        self._cell_editor.cancel()
+        self.canvas.reference_profile = []
+        self.canvas.reference_layers = []
         settings = case.get("settings", {})
         has_geometry = "slope_geometry" in settings
         geometry = settings.get("slope_geometry")
@@ -323,6 +399,11 @@ class GeometryEditor(ttk.Frame):
     def _toggle_geometry(self):
         if self._loading:
             return
+        if self.enabled_var.get():
+            self.capture_reference()
+        else:
+            self.canvas.reference_profile = []
+            self.canvas.reference_layers = []
         if self.enabled_var.get() and not self._original_points:
             self._loading = True
             try:
@@ -331,6 +412,11 @@ class GeometryEditor(ttk.Frame):
                 self._loading = False
         self._changed()
 
+    def capture_reference(self):
+        self.canvas.reference_profile = list(self.canvas.profile)
+        self.canvas.reference_layers = deepcopy(self.canvas.layers)
+        self.canvas.redraw()
+
     def _changed(self):
         if self.on_change is not None and not self._loading:
             self.on_change()
@@ -338,36 +424,23 @@ class GeometryEditor(ttk.Frame):
     def _begin_cell_edit(self, event):
         if not self.enabled_var.get():
             return
+        if self.table.identify_region(event.x, event.y) != "cell":
+            return
         row = self.table.identify_row(event.y)
         column = self.table.identify_column(event.x)
         if not row or column not in ("#1", "#2"):
             return
         if self._lock_origin and row == self.table.get_children()[0]:
             return
-        box = self.table.bbox(row, column)
-        if not box:
-            return
-        x, y, width, height = box
-        old_value = self.table.set(row, column)
-        editor = ttk.Entry(self.table)
-        editor.insert(0, old_value)
-        editor.select_range(0, "end")
-        editor.place(x=x, y=y, width=width, height=height)
-        editor.focus_set()
-
-        def finish(_event=None):
-            if not editor.winfo_exists():
-                return
-            value = editor.get()
-            editor.destroy()
+        def finish(value):
             self.table.set(row, column, value)
             self._changed()
 
-        editor.bind("<Return>", finish)
-        editor.bind("<FocusOut>", finish)
-        editor.bind("<Escape>", lambda _event: editor.destroy())
+        return self._cell_editor.begin(
+            row, column, lambda: self.table.set(row, column), finish
+        )
 
-    def _selection_changed(self):
+    def _selection_changed(self, _event=None):
         selection = self.table.selection()
         self.canvas.selected = self.table.index(selection[0]) if selection else -1
         self.canvas.redraw()
@@ -379,6 +452,7 @@ class GeometryEditor(ttk.Frame):
             self.table.see(rows[index])
 
     def add_point(self, x, y):
+        self._cell_editor.commit()
         self._loading = True
         try:
             if not self._original_points:
@@ -392,6 +466,7 @@ class GeometryEditor(ttk.Frame):
         self._changed()
 
     def move_point(self, row, x, y):
+        self._cell_editor.commit()
         if row == 0 and self._lock_origin:
             return
         self._loading = True
@@ -403,6 +478,7 @@ class GeometryEditor(ttk.Frame):
         self._changed()
 
     def remove_point(self):
+        self._cell_editor.commit()
         selection = self.table.selection()
         if not selection:
             self.message.configure(text="Select a point to remove.")
@@ -438,6 +514,7 @@ class GeometryEditor(ttk.Frame):
         return points
 
     def apply_to_case(self, case):
+        self._cell_editor.commit()
         if self.enabled_var.get():
             case.setdefault("settings", {})["slope_geometry"] = self.points()
         elif "settings" in case:
@@ -446,6 +523,11 @@ class GeometryEditor(ttk.Frame):
     def _match_bottom(self):
         if self._target_depth is not None and self.on_match_bottom is not None:
             self.on_match_bottom(self._target_depth)
+
+    def _update_layers(self):
+        self._cell_editor.commit()
+        if self.on_update_layers is not None:
+            self.on_update_layers()
 
     def refresh(self, layers, error="", thicknesses=None):
         points = []
@@ -464,6 +546,7 @@ class GeometryEditor(ttk.Frame):
         state = "normal" if self.enabled_var.get() else "disabled"
         self.table.configure(selectmode="browse")
         self.remove_button.configure(state=state)
+        self.update_layers_button.configure(state=state)
         if self.enabled_var.get():
             self.table.state(["!disabled"])
         else:

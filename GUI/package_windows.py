@@ -16,12 +16,17 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_DISTRIBUTIONS = (
     "matplotlib", "numpy", "pillow", "packaging", "python-dateutil", "pyparsing",
     "cycler", "kiwisolver", "contourpy", "fonttools", "tzdata", "pyinstaller",
+    "markdown-it-py", "mdurl", "mdit-py-plugins", "latex2mathml",
 )
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--solver", required=True, help="Path to a compatible HMBreach.exe")
+    parser.add_argument(
+        "--scientific-readme", required=True,
+        help="Path to the scientific README for the supplied solver",
+    )
     parser.add_argument(
         "--output", default=str(ROOT / "dist" / "HMBreachGUI"),
         help="Output package directory (default: dist/HMBreachGUI)",
@@ -33,6 +38,15 @@ def main():
     solver = Path(arguments.solver).expanduser().resolve()
     if not solver.is_file() or solver.suffix.lower() != ".exe":
         parser.error("--solver must be an existing Windows executable.")
+    scientific_readme = Path(arguments.scientific_readme).expanduser().resolve()
+    if not scientific_readme.is_file():
+        parser.error("--scientific-readme must be an existing file.")
+    diagram = scientific_readme.parent / "examples" / "initial_conditions_geometry.svg"
+    if not diagram.is_file():
+        parser.error(f"Scientific README diagram is missing: {diagram}")
+    logo = ROOT / "Deltares_logo_Wit_RGB.png"
+    if not logo.is_file():
+        parser.error(f"Deltares logo is missing: {logo}")
 
     destination = Path(arguments.output).expanduser()
     if not destination.is_absolute():
@@ -46,6 +60,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix="package-", dir=build_root) as temporary:
         staging = Path(temporary)
         license_root = _stage_licenses(staging)
+        bundled_readme = staging / "SCIENTIFICREADME.md"
+        shutil.copy2(scientific_readme, bundled_readme)
         command = [
             sys.executable, "-m", "PyInstaller",
             "--noconfirm", "--onedir", "--windowed",
@@ -56,9 +72,15 @@ def main():
             "--workpath", str(staging / "work"),
             "--specpath", str(staging),
             "--add-binary", f"{solver};.",
+            "--add-data", f"{ROOT / 'examples' / 'default_input.json'};examples",
             "--add-data", f"{ROOT / 'examples' / 'turbulence_input.json'};examples",
+            "--add-data", f"{diagram};examples",
+            "--add-data", f"{ROOT / 'examples' / 'coordinate_geometry_input.json'};examples",
+            "--add-data", f"{bundled_readme};.",
+            "--add-data", f"{logo};.",
             "--add-data", f"{ROOT / 'LICENSE'};.",
             "--add-data", f"{license_root};licenses",
+            "--collect-data", "latex2mathml",
             "--exclude-module", "PySide6",
             "--exclude-module", "PySide2",
             "--exclude-module", "PyQt5",
@@ -101,6 +123,12 @@ def _stage_licenses(staging):
             target = license_root / package / Path(str(relative_path))
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
+            copied += 1
+        if not copied and package == "latex2mathml" and installed.version == "3.81.1":
+            # The 3.81.1 wheel omits the upstream license file.
+            target = license_root / package / "LICENSE"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / "GUI" / "licenses" / "latex2mathml-LICENSE", target)
             copied += 1
         if not copied:
             raise RuntimeError(f"No license files found for runtime dependency {package}.")

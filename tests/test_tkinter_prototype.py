@@ -19,7 +19,7 @@ class ExecutableLocationTests(unittest.TestCase):
         window = PrototypeWindow()
         try:
             window.withdraw()
-            self.assertEqual(window.input_entry.get(), str(ROOT / "examples" / "turbulence_input.json"))
+            self.assertEqual(window.input_entry.get(), str(ROOT / "examples" / "default_input.json"))
             self.assertEqual(str(window.input_entry.cget("state")), "normal")
         finally:
             window.destroy()

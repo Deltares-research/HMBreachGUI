@@ -5,6 +5,8 @@ import tkinter as tk
 from copy import deepcopy
 from tkinter import messagebox, ttk
 
+from GUI.table_edit import TableCellEditor
+
 
 PHYSICAL_FIELDS = (
     ("g", "Gravity (m/s²)", "9.81236"),
@@ -121,7 +123,8 @@ class SettingsEditor(ttk.Frame):
         for column in ("s_m", "width_m"):
             self.width_table.column(column, width=130, anchor="e")
         self.width_table.pack(fill="x")
-        self.width_table.bind("<Double-1>", self._begin_width_cell_edit)
+        self._width_cell_editor = TableCellEditor(self.width_table)
+        self.width_table.bind("<Button-1>", self._begin_width_cell_edit)
         width_actions = ttk.Frame(table_frame)
         width_actions.pack(fill="x", pady=3)
         ttk.Button(width_actions, text="Add width point", command=self.add_width_point).pack(side="left")
@@ -235,6 +238,7 @@ class SettingsEditor(ttk.Frame):
             self._physical_labels[key].configure(text=default)
 
     def set_case(self, case):
+        self._width_cell_editor.cancel()
         settings = case.get("settings", {})
         constants = settings.get("physical_constants", {})
         options = settings.get("model_options", {})
@@ -308,35 +312,22 @@ class SettingsEditor(ttk.Frame):
         )
 
     def _begin_width_cell_edit(self, event):
+        if self.width_table.identify_region(event.x, event.y) != "cell":
+            return
         row = self.width_table.identify_row(event.y)
         column = self.width_table.identify_column(event.x)
         if not row or column not in ("#1", "#2"):
             return
-        box = self.width_table.bbox(row, column)
-        if not box:
-            return
-        x, y, width, height = box
-        values = list(self.width_table.item(row, "values"))
-        index = int(column[1:]) - 1
-        editor = ttk.Entry(self.width_table)
-        editor.insert(0, values[index])
-        editor.select_range(0, "end")
-        editor.place(x=x, y=y, width=width, height=height)
-        editor.focus_set()
-
-        def finish(_event=None):
-            if not editor.winfo_exists():
-                return
-            values[index] = editor.get()
-            editor.destroy()
-            self.width_table.item(row, values=values)
+        def finish(value):
+            self.width_table.set(row, column, value)
             self._edited()
 
-        editor.bind("<Return>", finish)
-        editor.bind("<FocusOut>", finish)
-        editor.bind("<Escape>", lambda _event: editor.destroy())
+        return self._width_cell_editor.begin(
+            row, column, lambda: self.width_table.set(row, column), finish
+        )
 
     def add_width_point(self):
+        self._width_cell_editor.commit()
         self._loading = True
         try:
             self._width_geometry_present = True
@@ -348,6 +339,7 @@ class SettingsEditor(ttk.Frame):
         self._edited()
 
     def remove_width_point(self):
+        self._width_cell_editor.commit()
         selection = self.width_table.selection()
         if not selection:
             self.message.configure(text="Select a width point to remove.")
@@ -381,6 +373,7 @@ class SettingsEditor(ttk.Frame):
         self._edited()
 
     def apply_to_case(self, case):
+        self._width_cell_editor.commit()
         had_settings = "settings" in case
         settings = case.setdefault("settings", {})
         for key, combo in (

@@ -17,6 +17,7 @@ class SettingsEditorTests(unittest.TestCase):
     def setUp(self):
         self.window = CaseWindow()
         self.window.withdraw()
+        self.window.load_input(ROOT / "examples" / "turbulence_input.json")
 
     def tearDown(self):
         self.window.update_idletasks()

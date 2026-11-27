@@ -11,6 +11,7 @@ from tkinter import filedialog, messagebox, ttk
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_INPUT = ROOT / "examples" / "default_input.json"
 
 
 def default_executable():
@@ -28,6 +29,7 @@ class PrototypeWindow(tk.Tk):
         self.process = None
         self._output_queue = queue.Queue()
         self._stdout_thread = None
+        self._stdout_finished = False
 
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(fill="both", expand=True)
@@ -35,7 +37,7 @@ class PrototypeWindow(tk.Tk):
         self.tabs.add(self.run_page, text="Run")
 
         self.executable = tk.StringVar(value=str(default_executable()))
-        self.input_file = tk.StringVar(value=str(ROOT / "examples" / "turbulence_input.json"))
+        self.input_file = tk.StringVar(value=str(DEFAULT_INPUT))
         self.output_directory = tk.StringVar()
         self.status = tk.StringVar(value="Select an output working directory to begin.")
 
@@ -128,6 +130,7 @@ class PrototypeWindow(tk.Tk):
             return
 
         self._set_output("")
+        self._stdout_finished = False
         self.status.set("Calculation running...")
         self.run_button.configure(state="disabled")
         try:
@@ -164,17 +167,16 @@ class PrototypeWindow(tk.Tk):
             self._output_queue.put(None)
 
     def _drain_output(self):
-        finished = False
         while True:
             try:
                 text = self._output_queue.get_nowait()
             except queue.Empty:
                 break
             if text is None:
-                finished = True
+                self._stdout_finished = True
             else:
                 self._append_output(text)
-        return finished
+        return self._stdout_finished
 
     def _poll_process(self):
         output_finished = self._drain_output()
